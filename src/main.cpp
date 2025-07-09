@@ -16,32 +16,36 @@ void setup() {
     Display.begin();
     TouchDetector.begin();
 
+    Serial.begin(115200);
+
+    Serial.println(F("begin"));
+
     lv_init();
     lv_tick_set_cb(millis);
 
     ui_init();
 }
 
-unsigned long nextTimeDisplayUpdate = 0;
+unsigned long next_time_display_update = 0;
 
 constexpr int32_t RPM_TEST_STEP = 10;
-unsigned long nextStartupIndicatorTestUpdate = 0;
-bool indicatorReverse = false;
-bool startupDone = false;
+unsigned long next_startup_indicator_test_update = 0;
+bool indicator_reverse = false;
+bool startup_done = false;
 
 void loop() {
-    if (millis() >= nextTimeDisplayUpdate)
+    if (millis() >= next_time_display_update)
     {
-        nextTimeDisplayUpdate = lv_task_handler() + millis();
+        next_time_display_update = lv_task_handler() + millis();
         ui_tick();
     }
 
-    if (!startupDone)
+    if (!startup_done)
     {
-        if (millis() >= nextStartupIndicatorTestUpdate)
+        if (millis() >= next_startup_indicator_test_update)
         {
             int32_t rpm = get_var_motor_rpm();
-            if (indicatorReverse)
+            if (indicator_reverse)
             {
                 if (rpm > 0)
                 {
@@ -49,7 +53,8 @@ void loop() {
                 }
                 else
                 {
-                    startupDone = false;
+                    Serial.println(F("startupDone = false"));
+                    startup_done = true;
                     rpm = 0;
                 }
             }
@@ -61,12 +66,12 @@ void loop() {
                 }
                 else
                 {
-                    indicatorReverse = true;
+                    indicator_reverse = true;
                     rpm = 10000;
                 }
             }
             set_var_motor_rpm(rpm);
-            nextStartupIndicatorTestUpdate = millis() + 1;
+            next_startup_indicator_test_update = millis() + 1;
         }
     }
 
