@@ -45,7 +45,7 @@ void loop() {
 
     if (!startup_done)
     {
-        if (millis() >= next_startup_indicator_test_update)
+        if (micros() >= next_startup_indicator_test_update)
         {
             int32_t rpm = get_var_motor_rpm();
             if (indicator_reverse)
@@ -78,7 +78,7 @@ void loop() {
             }
 
             set_var_motor_rpm(rpm);
-            next_startup_indicator_test_update = millis() + 1;
+            next_startup_indicator_test_update = micros() + 50;
         }
     }
 
