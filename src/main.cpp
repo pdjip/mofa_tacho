@@ -8,18 +8,12 @@
 #include "ui/ui.h"
 #include "ui/vars.h"
 
-LV_FONT_DECLARE(lv_font_montserrat_14);
-
 Arduino_H7_Video Display(800, 480, GigaDisplayShield);
 Arduino_GigaDisplayTouch  TouchDetector;
 
 void setup() {
     Display.begin();
     TouchDetector.begin();
-
-    Serial.begin(115200);
-
-    Serial.println(F("begin"));
 
     lv_init();
     lv_tick_set_cb(millis);
@@ -29,7 +23,7 @@ void setup() {
 
 unsigned long next_time_display_update = 0;
 
-constexpr int32_t RPM_TEST_STEP = 10;
+constexpr int32_t RPM_TEST_STEP = 500;
 constexpr int32_t RPM_MAX = 20000;
 
 unsigned long next_startup_indicator_test_update = 0;
@@ -45,7 +39,7 @@ void loop() {
 
     if (!startup_done)
     {
-        if (micros() >= next_startup_indicator_test_update)
+        if (millis() >= next_startup_indicator_test_update)
         {
             int32_t rpm = get_var_motor_rpm();
             if (indicator_reverse)
@@ -56,7 +50,6 @@ void loop() {
                 }
                 else
                 {
-                    Serial.println(F("startupDone = false"));
                     startup_done = true;
                     rpm = 0;
                     set_ui_time(22,55,34);
@@ -78,7 +71,7 @@ void loop() {
             }
 
             set_var_motor_rpm(rpm);
-            next_startup_indicator_test_update = micros() + 50;
+            next_startup_indicator_test_update = millis() + 30;
         }
     }
 
