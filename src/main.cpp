@@ -3,6 +3,7 @@
 
 #include "Arduino_H7_Video.h"
 #include "Arduino_GigaDisplayTouch.h"
+#include "vars.h"
 
 #include "ui/ui.h"
 #include "ui/vars.h"
@@ -29,6 +30,8 @@ void setup() {
 unsigned long next_time_display_update = 0;
 
 constexpr int32_t RPM_TEST_STEP = 10;
+constexpr int32_t RPM_MAX = 20000;
+
 unsigned long next_startup_indicator_test_update = 0;
 bool indicator_reverse = false;
 bool startup_done = false;
@@ -56,20 +59,24 @@ void loop() {
                     Serial.println(F("startupDone = false"));
                     startup_done = true;
                     rpm = 0;
+                    set_ui_time(22,55,34);
+                    set_ui_velocity(32);
+                    set_ui_temperature(60.54);
                 }
             }
             else
             {
-                if (rpm < 10000)
+                if (rpm < RPM_MAX)
                 {
                     rpm += RPM_TEST_STEP;
                 }
                 else
                 {
                     indicator_reverse = true;
-                    rpm = 10000;
+                    rpm = RPM_MAX;
                 }
             }
+
             set_var_motor_rpm(rpm);
             next_startup_indicator_test_update = millis() + 1;
         }
