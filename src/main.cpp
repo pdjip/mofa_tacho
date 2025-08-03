@@ -328,7 +328,7 @@ void sensorTask()
       curAccM = gnss.getHorizontalAccEst() / 1000.0f;
       gpsFix3D = (gnss.getFixType() == 3);
       dataMutex.unlock();
-      set_ui_velocity(curSpeedMps / 3600);
+      set_ui_velocity(static_cast<int>(curSpeedMps) / 3600);
       set_ui_time(ts->tm_hour, ts->tm_min, ts->tm_sec);
 
     }
