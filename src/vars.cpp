@@ -49,7 +49,7 @@ void set_ui_temperature(float_t value)
 
 void set_ui_time(uint_fast8_t hours, uint_fast8_t minutes, uint_fast8_t seconds)
 {
-    sprintf(time_text, "%i:%i:%i", hours, minutes, seconds);
+    sprintf(time_text, "%02i:%02i:%02i", hours, minutes, seconds);
 }
 
 extern "C" int32_t get_var_motor_rpm() {

@@ -1,4 +1,5 @@
 .pio
 .idea
+.vscode
 src/ui
 mofa.eez-project-ui-state
