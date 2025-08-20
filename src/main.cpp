@@ -16,7 +16,6 @@
 #include <DallasTemperature.h>
 #include <mbed.h>
 #include <mbed_mktime.h>
-#include <RTOS.h>
 #include <time.h>
 #include <chrono>
 
@@ -28,6 +27,7 @@
 #include "ui/ui.h"
 #include "ui/vars.h"
 
+using namespace rtos;
 using namespace std::chrono;
 
 //=============================================================================
@@ -54,6 +54,8 @@ using namespace std::chrono;
 //=============================================================================
 // 2. GLOBALS
 //=============================================================================
+
+constexpr float MM_TO_KPH = 0.0036;
 
 USBHostMSD msd;
 mbed::FATFileSystem fs("usb");
@@ -175,6 +177,7 @@ void setupGPS()
   if (!gnss.begin(Wire))
   {
     Serial.println("GPS begin failed");
+    set_var_gps_online(false);
     return;
   }
   gnss.setI2COutput(COM_TYPE_UBX);
@@ -328,9 +331,16 @@ void sensorTask()
       curAccM = gnss.getHorizontalAccEst() / 1000.0f;
       gpsFix3D = (gnss.getFixType() == 3);
       dataMutex.unlock();
-      set_ui_velocity(static_cast<int>(curSpeedMps) / 3600);
+      set_ui_velocity(static_cast<int>(curSpeedMps * MM_TO_KPH));
+      Serial.print("GPS online, speed: ");
+      Serial.println(curSpeedMps);
       set_ui_time(ts->tm_hour, ts->tm_min, ts->tm_sec);
-
+      set_var_gps_online(true);
+    }
+    else
+    {
+      Serial.println("GPS offline");
+      set_var_gps_online(false);
     }
 
     // Serial debug @5Hz

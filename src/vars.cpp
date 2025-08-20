@@ -7,11 +7,12 @@
 const int32_t RPM_RED_ZONE_BEGIN = 15000;
 
 int32_t motor_rpm = 0;
-char motor_rpm_text[7] = { 0 };
+char motor_rpm_text[7] = "00000";
 bool hide_rpm_warning;
-char velocity_text[5] = { 0 };
+char velocity_text[5] = "0";
 char temperature_text[5] = { 0 };
 char time_text[10] = "12:25:05";
+bool gps_online = false;
 
 extern "C" void set_var_motor_rpm(int32_t value) {
     if (value >= RPM_RED_ZONE_BEGIN)
@@ -49,6 +50,8 @@ void set_ui_temperature(float_t value)
 
 void set_ui_time(uint_fast8_t hours, uint_fast8_t minutes, uint_fast8_t seconds)
 {
+    hours += 2;
+    hours %= 24;
     sprintf(time_text, "%02i:%02i:%02i", hours, minutes, seconds);
 }
 
@@ -76,6 +79,10 @@ extern "C" const char *get_var_time_text() {
     return time_text;
 }
 
+extern "C" bool get_var_gps_online() {
+    return gps_online;
+}
+
 extern "C" void set_var_time_text(const char *value) {}
 
 extern "C" void set_var_temperature_text(const char *value) {}
@@ -85,3 +92,7 @@ extern "C" void set_var_hide_rpm_warning(bool value) {}
 extern "C" void set_var_motor_rpm_text(const char *value) {}
 
 extern "C" void set_var_velocity_text(const char *value) {}
+
+extern "C" void set_var_gps_online(bool value) {
+    gps_online = !value;
+}
