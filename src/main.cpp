@@ -320,7 +320,7 @@ void sensorTask()
     // GPS update via getPVT()
     if (gpsOK && gnss.getPVT())
     {
-      t = time(NULL);
+      t = time(nullptr);
       ts = gmtime(&t);
       dataMutex.lock();
       curLatDeg = gnss.getLatitude();
@@ -332,14 +332,11 @@ void sensorTask()
       gpsFix3D = (gnss.getFixType() == 3);
       dataMutex.unlock();
       set_ui_velocity(static_cast<int>(curSpeedMps * MM_TO_KPH));
-      Serial.print("GPS online, speed: ");
-      Serial.println(curSpeedMps);
       set_ui_time(ts->tm_hour, ts->tm_min, ts->tm_sec);
       set_var_gps_online(true);
     }
     else
     {
-      Serial.println("GPS offline");
       set_var_gps_online(false);
     }
 
