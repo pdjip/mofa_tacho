@@ -184,7 +184,7 @@ void setupGPS()
     rtos::ThisThread::sleep_for(milliseconds(1000));
   }
   gnss.setI2COutput(COM_TYPE_UBX);
-  gnss.setMeasurementRate(1000 / GPS_MEAS_RATE_HZ);+
+  gnss.setMeasurementRate(1000 / GPS_MEAS_RATE_HZ);
   gnss.setNavigationFrequency(1);
   gpsOK = true;
 
@@ -335,7 +335,14 @@ void sensorTask()
       gpsFix3D = (gnss.getFixType() == 3);
       dataMutex.unlock();
       set_ui_velocity(static_cast<int>(curSpeedMps * MM_TO_KPH));
-      set_ui_time(ts->tm_hour, ts->tm_min, ts->tm_sec);
+      
+      {
+        tm t;
+        // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
+        _rtc_localtime(time(NULL), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
+        set_ui_time(t.tm_hour, t.tm_min, t.tm_sec);
+      }
+
       set_var_gps_online(true);
     }
     else
