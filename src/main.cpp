@@ -56,6 +56,7 @@ using namespace std::chrono;
 //=============================================================================
 
 constexpr float MM_TO_KPH = 0.0036;
+constexpr uint64_t MINIMUM_RPM_PULSE_DELTA = 1000;
 
 USBHostMSD msd;
 mbed::FATFileSystem fs("usb");
@@ -124,8 +125,11 @@ void rpmISR()
 {
   uint64_t now = micros();
   uint64_t delta = now - lastPulseTime;
-  lastPulseTime = now;
-  delta_rpm = delta;
+  if (delta > MINIMUM_RPM_PULSE_DELTA)
+  {
+    lastPulseTime = now;
+    delta_rpm = delta;
+  }
 }
 
 //=============================================================================
@@ -174,14 +178,13 @@ void loop()
 //=============================================================================
 void setupGPS()
 {
-  if (!gnss.begin(Wire))
+  while (!gnss.begin(Wire))
   {
-    Serial.println("GPS begin failed");
     set_var_gps_online(false);
-    return;
+    rtos::ThisThread::sleep_for(milliseconds(1000));
   }
   gnss.setI2COutput(COM_TYPE_UBX);
-  gnss.setMeasurementRate(1000 / GPS_MEAS_RATE_HZ);
+  gnss.setMeasurementRate(1000 / GPS_MEAS_RATE_HZ);+
   gnss.setNavigationFrequency(1);
   gpsOK = true;
 

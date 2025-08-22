@@ -587,8 +587,8 @@
                     "definition": {
                       "MAIN": {
                         "DEFAULT": {
-                          "img_opa": 100,
-                          "align": "OUT_TOP_MID"
+                          "align": "OUT_TOP_MID",
+                          "img_opa": 100
                         }
                       }
                     }
