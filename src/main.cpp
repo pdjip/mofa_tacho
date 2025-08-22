@@ -56,6 +56,7 @@ using namespace std::chrono;
 //=============================================================================
 
 constexpr float MM_TO_KPH = 0.0036;
+constexpr float MM_TO_M = 0.001;
 constexpr uint64_t MINIMUM_RPM_PULSE_DELTA = 1000;
 
 USBHostMSD msd;
@@ -71,7 +72,6 @@ OneWire oneWire(PIN_ONEWIRE_BUS);
 DallasTemperature sensors_DS(&oneWire);
 bool tempOK = false;
 
-rtos::Queue<float, 64> rpmQueue;
 volatile uint64_t lastPulseTime = 0;
 volatile uint64_t delta_rpm = 0;
 
@@ -371,8 +371,8 @@ void sensorTask()
       Serial.print(curLonDeg, 6);
       Serial.print(" Alt ");
       Serial.print(curAltM);
-      Serial.print(" m/s ");
-      Serial.print(curSpeedMps);
+      Serial.print(" kph ");
+      Serial.print(curSpeedMps * MM_TO_KPH);
       Serial.print(" Crs ");
       Serial.print(curCourseDeg);
       Serial.print(" Acc ");
@@ -411,14 +411,17 @@ void loggingTask()
         safeFileWrite(FILE_SENSOR_PATH, headerBuffer, 1);
       }
       // timestamp
-      time_t now = time(NULL);
-      struct tm *ts = gmtime(&now);
       char timeBuf[64];
-      snprintf(timeBuf, sizeof(timeBuf),
-               "%04d-%02d-%02d %02d:%02d:%02d.%03ld\t",
-               ts->tm_year + 1900, ts->tm_mon + 1, ts->tm_mday,
-               ts->tm_hour, ts->tm_min, ts->tm_sec,
-               (long)(millis() % 1000));
+      {
+        tm t;
+        // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
+        _rtc_localtime(time(NULL), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
+        snprintf(timeBuf, sizeof(timeBuf),
+                "%04d-%02d-%02d %02d:%02d:%02d.%03ld\t",
+                t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                t.tm_hour, t.tm_min, t.tm_sec,
+                (long)(millis() % 1000));
+      }
 
       // RPM buffer
       dataMutex.lock();
@@ -433,7 +436,7 @@ void loggingTask()
 
       // SENSOR buffer @10Hz
       dataMutex.lock();
-      String sline = String(timeBuf) + curTempC + "\t" + curLatDeg + "\t" + curLonDeg + "\t" + curAltM + "\t" + curSpeedMps + "\t" + curCourseDeg + "\t" + curAccM + "\t" + gpsOK + "\t" + gpsFix3D + "\n";
+      String sline = String(timeBuf) + curTempC + "\t" + curLatDeg + "\t" + curLonDeg + "\t" + (curAltM * MM_TO_M) + "\t" + (curSpeedMps * MM_TO_KPH) + "\t" + curCourseDeg + "\t" + curAccM + "\t" + gpsOK + "\t" + gpsFix3D + "\n";
       dataMutex.unlock();
       sensorBuffer[sensorBufCount++] = sline;
       if (sensorBufCount >= USB_WRITE_BLOCK)
@@ -472,8 +475,7 @@ void rpmSensorTask()
         {
             last_zero = false;
             float rpm = delta_last_rpm_pulse < 150 ? microsToRPM(delta_rpm, 2) : 0;
-            
-            rpmQueue.try_put(&rpm);
+            curRPM = rpm;
 
             set_var_motor_rpm(rpm);
             if (rpm > RPM_HYST_ON)
@@ -483,8 +485,7 @@ void rpmSensorTask()
         } else if (delta_last_rpm_pulse > 150 && !last_zero) {
             last_zero = true;
             float rpm = 0;
-            
-            rpmQueue.try_put(&rpm);
+            curRPM = 0;
             set_var_motor_rpm(rpm);
             digitalWrite(PIN_RPM_OUT, LOW);
         }
