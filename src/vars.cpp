@@ -10,8 +10,8 @@ int32_t motor_rpm = 0;
 char motor_rpm_text[7] = "00000";
 bool hide_rpm_warning;
 char velocity_text[5] = "0";
-char temperature_text[5] = { 0 };
-char time_text[10] = "12:25:05";
+char temperature_text[5] = "0.0";
+char time_text[10] = "99:99:99";
 bool gps_online = false;
 
 extern "C" void set_var_motor_rpm(const int32_t value)
