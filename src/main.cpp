@@ -161,16 +161,16 @@ void setup()
   // Prüfe sofort, ob schon ein Medium da ist
   msd.connect();
 
+  displayThread.start(displayTask);
   sensorThread.start(sensorTask);
   loggingThread.start(loggingTask);
-  displayThread.start(displayTask);
   rpmSensorThread.start(rpmSensorTask);
 }
 
 void loop()
 {
   // use chrono::milliseconds to silence deprecation warning
-  rtos::ThisThread::sleep_for(milliseconds(1000));
+  rtos::ThisThread::sleep_for(milliseconds(10000));
 }
 
 //=============================================================================
@@ -302,6 +302,7 @@ void sensorTask()
   uint32_t lastDebugMs = 0;
   struct tm *ts;
   time_t t;
+  tm t1;
 
   while (true)
   {
@@ -335,14 +336,10 @@ void sensorTask()
       gpsFix3D = (gnss.getFixType() == 3);
       dataMutex.unlock();
       set_ui_velocity(static_cast<int>(curSpeedMps * MM_TO_KPH));
-      
-      {
-        tm t;
-        // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
-        _rtc_localtime(time(NULL), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
-        set_ui_time(t.tm_hour, t.tm_min, t.tm_sec);
-      }
-
+      // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
+      _rtc_localtime(time(NULL), &t1, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
+      set_ui_time(t1.tm_hour, t1.tm_min, t1.tm_sec);
+      // set_ui_time(1,2,3);
       set_var_gps_online(true);
     }
     else
