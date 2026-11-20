@@ -8,6 +8,7 @@
 #include <mbed_mktime.h>
 #include <cmath>
 #include <chrono>
+#include <cstdio>
 
 namespace {
 constexpr uint16_t COMMAND_TIMEOUT_MS = 250;
@@ -22,6 +23,49 @@ rtos::Mutex snapshotMutex;
 GnssSnapshot published;
 alignas(8) unsigned char gnssStack[STACK_BYTES];
 rtos::Thread gnssThread(osPriorityNormal, STACK_BYTES, gnssStack, "gnss");
+
+// Owned exclusively by gnssTask(); never read/reset by another thread.
+struct GnssDiagnostics {
+    uint32_t windowStart = millis();
+    uint32_t epochs = 0;
+    uint32_t validEpochs = 0;
+    uint32_t duplicates = 0;
+    uint32_t lastDeltaMs = 0;
+
+    void reportIfDue()
+    {
+        const uint32_t now = millis();
+        const uint32_t elapsed = now - windowStart;
+        if (elapsed < 10000) return;
+        // Fixed-point Hz avoids floating-point printf and uses the actual window.
+        const uint32_t hz100 = (uint64_t(epochs) * 100000 + elapsed / 2) / elapsed;
+        const uint32_t validHz100 = (uint64_t(validEpochs) * 100000 + elapsed / 2) / elapsed;
+        char line[192];
+        snprintf(line, sizeof(line),
+            "GNSS DIAG win_ms=%lu epochs=%lu Hz=%lu.%02lu valid=%lu validHz=%lu.%02lu dt_ms=%lu dup=%lu\n",
+            (unsigned long)elapsed, (unsigned long)epochs,
+            (unsigned long)(hz100 / 100), (unsigned long)(hz100 % 100),
+            (unsigned long)validEpochs,
+            (unsigned long)(validHz100 / 100), (unsigned long)(validHz100 % 100),
+            (unsigned long)lastDeltaMs, (unsigned long)duplicates);
+        Serial.print(line);
+        windowStart = now;
+        epochs = validEpochs = duplicates = lastDeltaMs = 0;
+    }
+
+    void waitRetry(uint32_t durationMs)
+    {
+        const uint32_t start = millis();
+        while (static_cast<uint32_t>(millis() - start) < durationMs) {
+            reportIfDue();
+            const uint32_t elapsed = millis() - start;
+            if (elapsed >= durationMs) break;
+            const uint32_t remaining = durationMs - elapsed;
+            rtos::ThisThread::sleep_for(std::chrono::milliseconds(remaining < 100 ? remaining : 100));
+        }
+        reportIfDue();
+    }
+};
 
 void invalidate(GnssSnapshot &s)
 {
@@ -110,8 +154,10 @@ void gnssTask()
     uint32_t retryMs = 1000;
     // Keep ordering history across reconnects, separately from public session IDs.
     gnss_policy::EpochTracker epochs;
+    GnssDiagnostics diagnostics;
 
     while (true) {
+        diagnostics.reportIfDue();
         current.connection = GnssConnection::Searching;
         invalidate(current);
         publish(current);
@@ -140,6 +186,7 @@ void gnssTask()
                 gnss_policy::RateMonitor rate;
 
                 while (static_cast<uint32_t>(millis() - lastNewPvt) < STALE_MS) {
+                    diagnostics.reportIfDue();
                     // Auto-PVT checks available data instead of polling/waiting
                     // for a reply. Stage 1 intentionally keeps only the latest PVT.
                     if (gnss.getPVT(0)) {
@@ -151,6 +198,8 @@ void gnssTask()
                         const uint32_t now = millis();
                         const auto epoch = epochs.observe(p.iTOW, now, timeValid,
                             int64_t(utcSeconds) * 1000 + utcNanoseconds / 1000000);
+                        if (epoch == gnss_policy::EpochResult::Duplicate)
+                            ++diagnostics.duplicates;
                         if (epoch == gnss_policy::EpochResult::Baseline ||
                             epoch == gnss_policy::EpochResult::New) {
                             lastNewPvt = now;
@@ -208,6 +257,12 @@ void gnssTask()
                             }
                             retryMs = 1000;
                             publish(current);
+                            // Count only accepted, published new iTOW epochs.
+                            // Position/time validity is independent of packet freshness.
+                            ++diagnostics.epochs;
+                            if (current.positionValid && current.timeValid)
+                                ++diagnostics.validEpochs;
+                            diagnostics.lastDeltaMs = current.epochDeltaMs;
                         }
                     }
                     if (static_cast<uint32_t>(millis() - lastRateCheck) >= RATE_CHECK_MS) {
@@ -229,7 +284,7 @@ void gnssTask()
             }
         }
         publish(current);
-        rtos::ThisThread::sleep_for(milliseconds(retryMs));
+        diagnostics.waitRetry(retryMs);
         if (retryMs < 8000) retryMs *= 2;
     }
 }
