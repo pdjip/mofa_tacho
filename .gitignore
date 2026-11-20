@@ -1,7 +1,7 @@
 .pio
 .idea
 .vscode
-src/ui
+src/ui/.eez-project-build
 mofa.eez-project-ui-state
 
 # Local PlatformIO configuration
