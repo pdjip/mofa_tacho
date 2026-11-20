@@ -4,11 +4,9 @@
 
 #include <stdio.h>
 
-const int32_t RPM_RED_ZONE_BEGIN = 15000;
-
 int32_t motor_rpm = 0;
 char motor_rpm_text[20] = "00000";
-bool hide_rpm_warning;
+bool hide_rpm_warning = true;
 char velocity_text[20] = "0";
 char temperature_text[20] = "0.0";
 char time_text[20] = "99:99:99";
@@ -16,15 +14,6 @@ bool gps_online = false;
 
 extern "C" void set_var_motor_rpm(const int32_t value)
 {
-    if (value >= RPM_RED_ZONE_BEGIN)
-    {
-        hide_rpm_warning = false;
-    }
-    else
-    {
-        hide_rpm_warning = true;
-    }
-
     motor_rpm = value;
 
     if (motor_rpm > 999999)
@@ -32,6 +21,11 @@ extern "C" void set_var_motor_rpm(const int32_t value)
         motor_rpm = 999999;
     }
     sprintf(motor_rpm_text, "%05ld", motor_rpm);
+}
+
+void set_ui_rpm_warning(bool active)
+{
+    hide_rpm_warning = !active;
 }
 
 void set_ui_velocity(const int32_t value)

@@ -23,6 +23,7 @@
 #include "Arduino_H7_Video.h"
 #include "Arduino_GigaDisplayTouch.h"
 #include "vars.h"
+#include "rpm_display_filter.h"
 #include "gnss_service.h"
 
 #include "ui/ui.h"
@@ -71,6 +72,7 @@ volatile uint32_t delta_rpm = 0;
 
 rtos::Mutex dataMutex;
 float curRPM = 0.0f;
+bool curRpmWarning = false; // Published with curRPM under dataMutex.
 float curTempC = 0.0f;
 
 String rpmBuffer[USB_WRITE_BLOCK];
@@ -356,14 +358,17 @@ void loggingTask()
 void displayTask()
 {
   uint32_t sleep_ms = 0;
+  RpmDisplayFilter rpmDisplayFilter;
   while (true) {
     // Only this thread touches UI model buffers once the threads have started.
     const GnssSnapshot gps = readGnssSnapshot();
     dataMutex.lock();
     const float rpm = curRPM;
+    const bool rpmWarning = curRpmWarning;
     const float temperature = curTempC;
     dataMutex.unlock();
-    set_var_motor_rpm(static_cast<int32_t>(rpm));
+    set_var_motor_rpm(rpmDisplayFilter.update(rpm, millis()));
+    set_ui_rpm_warning(rpmWarning);
     set_ui_temperature(temperature);
     set_var_gps_online(gps.connection == GnssConnection::Receiving);
     set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
@@ -383,7 +388,12 @@ void rpmSensorTask()
 {
     uint32_t lastPulseTimeSaved = 0;
     bool last_zero = true;
+    bool warning = false;
     digitalWrite(PIN_RPM_OUT, LOW);
+    dataMutex.lock();
+    curRPM = 0;
+    curRpmWarning = warning;
+    dataMutex.unlock();
 
     while (true)
     {
@@ -408,17 +418,21 @@ void rpmSensorTask()
             const float rpm = intervalValid && pulseAgeUs < RPM_PULSE_TIMEOUT_US
                 ? microsToRPM(pulseDelta, RPM_PULSE_PER_REV) : 0.0f;
             if (rpm > RPM_HYST_ON)
-                digitalWrite(PIN_RPM_OUT, HIGH);
-            if (rpm < RPM_HYST_OFF)
-                digitalWrite(PIN_RPM_OUT, LOW);
+                warning = true;
+            else if (rpm < RPM_HYST_OFF)
+                warning = false;
+            digitalWrite(PIN_RPM_OUT, warning ? HIGH : LOW);
             dataMutex.lock();
             curRPM = rpm;
+            curRpmWarning = warning;
             dataMutex.unlock();
         } else if (pulseAgeUs >= RPM_PULSE_TIMEOUT_US && !last_zero) {
             last_zero = true;
+            warning = false;
             digitalWrite(PIN_RPM_OUT, LOW);
             dataMutex.lock();
             curRPM = 0;
+            curRpmWarning = warning;
             dataMutex.unlock();
         }
         rtos::ThisThread::sleep_for(milliseconds(1));
