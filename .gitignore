@@ -3,3 +3,6 @@
 .vscode
 src/ui
 mofa.eez-project-ui-state
+
+# Local PlatformIO configuration
+platformio.local*.ini
