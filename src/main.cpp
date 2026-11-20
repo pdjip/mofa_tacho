@@ -14,6 +14,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <mbed.h>
+#include <platform/mbed_critical.h>
 #include <mbed_mktime.h>
 #include <time.h>
 #include <chrono>
@@ -53,7 +54,8 @@ using namespace std::chrono;
 // 2. GLOBALS
 //=============================================================================
 
-constexpr uint64_t MINIMUM_RPM_PULSE_DELTA = 1000;
+constexpr uint32_t MINIMUM_RPM_PULSE_DELTA = 1000;
+constexpr uint32_t RPM_PULSE_TIMEOUT_US = 150000;
 
 USBHostMSD msd;
 mbed::FATFileSystem fs("usb");
@@ -64,8 +66,8 @@ OneWire oneWire(PIN_ONEWIRE_BUS);
 DallasTemperature sensors_DS(&oneWire);
 bool tempOK = false;
 
-volatile uint64_t lastPulseTime = 0;
-volatile uint64_t delta_rpm = 0;
+volatile uint32_t lastPulseTime = 0;
+volatile uint32_t delta_rpm = 0;
 
 rtos::Mutex dataMutex;
 float curRPM = 0.0f;
@@ -108,8 +110,8 @@ float microsToRPM(unsigned long deltaMicros, int pulsesPerRev);
 //=============================================================================
 void rpmISR()
 {
-  uint64_t now = micros();
-  uint64_t delta = now - lastPulseTime;
+  const uint32_t now = static_cast<uint32_t>(micros());
+  const uint32_t delta = now - lastPulseTime;
   if (delta > MINIMUM_RPM_PULSE_DELTA)
   {
     lastPulseTime = now;
@@ -379,16 +381,32 @@ void displayTask()
 
 void rpmSensorTask()
 {
-    uint64_t lastPulseTimeSaved = 0;
-    bool last_zero = false;
+    uint32_t lastPulseTimeSaved = 0;
+    bool last_zero = true;
+    digitalWrite(PIN_RPM_OUT, LOW);
+
     while (true)
     {
-        uint32_t now = millis();
-        int delta_last_rpm_pulse = now - lastPulseTime / 1000;
-        if (lastPulseTimeSaved != lastPulseTime)
+        uint32_t pulseTime;
+        uint32_t pulseDelta;
+
+        // Copy the ISR's pair consistently; all calculations and RTOS calls
+        // remain outside the interrupt-masked section.
+        core_util_critical_section_enter();
+        pulseTime = lastPulseTime;
+        pulseDelta = delta_rpm;
+        core_util_critical_section_exit();
+
+        // Read now after the snapshot, using the same wrapping clock as the ISR.
+        const uint32_t pulseAgeUs = static_cast<uint32_t>(micros()) - pulseTime;
+        if (lastPulseTimeSaved != pulseTime)
         {
+            lastPulseTimeSaved = pulseTime;
+            const bool intervalValid = !last_zero && pulseDelta < RPM_PULSE_TIMEOUT_US;
             last_zero = false;
-            float rpm = delta_last_rpm_pulse < 150 ? microsToRPM(delta_rpm, 2) : 0;
+            // The first pulse after start/timeout is a new reference, not an RPM.
+            const float rpm = intervalValid && pulseAgeUs < RPM_PULSE_TIMEOUT_US
+                ? microsToRPM(pulseDelta, RPM_PULSE_PER_REV) : 0.0f;
             if (rpm > RPM_HYST_ON)
                 digitalWrite(PIN_RPM_OUT, HIGH);
             if (rpm < RPM_HYST_OFF)
@@ -396,7 +414,7 @@ void rpmSensorTask()
             dataMutex.lock();
             curRPM = rpm;
             dataMutex.unlock();
-        } else if (delta_last_rpm_pulse > 150 && !last_zero) {
+        } else if (pulseAgeUs >= RPM_PULSE_TIMEOUT_US && !last_zero) {
             last_zero = true;
             digitalWrite(PIN_RPM_OUT, LOW);
             dataMutex.lock();
