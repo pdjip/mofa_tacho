@@ -9,12 +9,12 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <Arduino_USBHostMbed5.h>
 #include <FATFileSystem.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <mbed.h>
+#include <platform/mbed_critical.h>
 #include <mbed_mktime.h>
 #include <time.h>
 #include <chrono>
@@ -23,6 +23,8 @@
 #include "Arduino_H7_Video.h"
 #include "Arduino_GigaDisplayTouch.h"
 #include "vars.h"
+#include "rpm_display_filter.h"
+#include "gnss_service.h"
 
 #include "ui/ui.h"
 #include "ui/vars.h"
@@ -38,14 +40,12 @@ using namespace std::chrono;
 #define PIN_ONEWIRE_BUS 4
 #define I2C_CLOCK_HZ 400000
 #define I2C_POLL_WAIT_MS 10
-#define GPS_MEAS_RATE_HZ 5
 #define RPM_HYST_ON 15000
 #define RPM_HYST_OFF 14500
 #define RPM_PULSE_PER_REV 2
 #define RPM_MIN_VALID 400
 #define TEMP_READ_HZ 1
 #define SENSOR_LOG_HZ 10
-#define DEBUG_RATE_HZ 5
 #define USB_WRITE_BLOCK 20
 
 #define FILE_RPM_PATH "/usb/DRZ.txt"
@@ -55,35 +55,25 @@ using namespace std::chrono;
 // 2. GLOBALS
 //=============================================================================
 
-constexpr float MM_TO_KPH = 0.0036;
-constexpr float MM_TO_M = 0.001;
-constexpr uint64_t MINIMUM_RPM_PULSE_DELTA = 1000;
+constexpr uint32_t MINIMUM_RPM_PULSE_DELTA = 1000;
+constexpr uint32_t RPM_PULSE_TIMEOUT_US = 150000;
 
 USBHostMSD msd;
 mbed::FATFileSystem fs("usb");
 volatile bool usbAttachedFlag = false;
 volatile bool usbMountedFlag = false;
 
-SFE_UBLOX_GNSS gnss;
-bool gpsOK = false;
-bool gpsFix3D = false;
-
 OneWire oneWire(PIN_ONEWIRE_BUS);
 DallasTemperature sensors_DS(&oneWire);
 bool tempOK = false;
 
-volatile uint64_t lastPulseTime = 0;
-volatile uint64_t delta_rpm = 0;
+volatile uint32_t lastPulseTime = 0;
+volatile uint32_t delta_rpm = 0;
 
 rtos::Mutex dataMutex;
 float curRPM = 0.0f;
+bool curRpmWarning = false; // Published with curRPM under dataMutex.
 float curTempC = 0.0f;
-float curLatDeg = 0.0f;
-float curLonDeg = 0.0f;
-float curAltM = 0.0f;
-float curSpeedMps = 0.0f;
-float curCourseDeg = 0.0f;
-float curAccM = 0.0f;
 
 String rpmBuffer[USB_WRITE_BLOCK];
 uint8_t rpmBufCount = 0;
@@ -104,7 +94,6 @@ Arduino_GigaDisplayTouch TouchDetector;
 // 3. PROTOTYPES
 //=============================================================================
 void rpmISR();
-void setupGPS();
 void usbAttachHandler();
 void usbDetachHandler();
 void sensorTask();
@@ -123,8 +112,8 @@ float microsToRPM(unsigned long deltaMicros, int pulsesPerRev);
 //=============================================================================
 void rpmISR()
 {
-  uint64_t now = micros();
-  uint64_t delta = now - lastPulseTime;
+  const uint32_t now = static_cast<uint32_t>(micros());
+  const uint32_t delta = now - lastPulseTime;
   if (delta > MINIMUM_RPM_PULSE_DELTA)
   {
     lastPulseTime = now;
@@ -146,7 +135,6 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(PIN_RPM_IN), rpmISR, RISING);
 
   sensors_DS.begin();
-  setupGPS();
 
   // initialisieren des Displays
   Display.begin();
@@ -154,6 +142,9 @@ void setup()
   lv_init();
   lv_tick_set_cb(millis);
 
+  set_var_gps_online(false);
+  set_ui_velocity(-1);
+  set_ui_time_unavailable();
   ui_init();
 
   msd.attach_detected_callback(usbAttachHandler);
@@ -165,49 +156,14 @@ void setup()
   sensorThread.start(sensorTask);
   loggingThread.start(loggingTask);
   rpmSensorThread.start(rpmSensorTask);
+  if (!startGnss())
+    Serial.println("GNSS thread could not be started; other tasks remain active");
 }
 
 void loop()
 {
   // use chrono::milliseconds to silence deprecation warning
   rtos::ThisThread::sleep_for(milliseconds(10000));
-}
-
-//=============================================================================
-// 6. GPS INIT & RTC SET
-//=============================================================================
-void setupGPS()
-{
-  while (!gnss.begin(Wire))
-  {
-    set_var_gps_online(false);
-    rtos::ThisThread::sleep_for(milliseconds(1000));
-  }
-  gnss.setI2COutput(COM_TYPE_UBX);
-  gnss.setMeasurementRate(1000 / GPS_MEAS_RATE_HZ);
-  gnss.setNavigationFrequency(1);
-  gpsOK = true;
-
-  uint32_t start = millis();
-  while (millis() - start < 5000)
-  {
-    // poll PVT message (NAV-PVT)
-    if (gnss.getPVT())
-    {
-      gpsFix3D = (gnss.getFixType() == 3);
-      struct tm tGPS;
-      tGPS.tm_year = gnss.getYear() - 1900;
-      tGPS.tm_mon = gnss.getMonth() - 1;
-      tGPS.tm_mday = gnss.getDay();
-      tGPS.tm_hour = gnss.getHour();
-      tGPS.tm_min = gnss.getMinute();
-      tGPS.tm_sec = gnss.getSecond();
-      time_t gpsTime = mktime(&tGPS);
-      set_time(gpsTime);
-      break;
-    }
-    rtos::ThisThread::sleep_for(milliseconds(100));
-  }
 }
 
 //=============================================================================
@@ -294,15 +250,11 @@ void safeFileWrite(const char *path, String lines[], uint8_t count)
 }
 
 //=============================================================================
-// 8. SENSOR TASK (RPM, Temp, GPS, Debug)
+// 8. TEMPERATURE TASK (GNSS runs independently)
 //=============================================================================
 void sensorTask()
 {
   uint32_t lastTempMs = 0;
-  uint32_t lastDebugMs = 0;
-  struct tm *ts;
-  time_t t;
-  tm t1;
 
   while (true)
   {
@@ -317,67 +269,6 @@ void sensorTask()
       tempOK = (tC > -55 && tC < 125);
       dataMutex.lock();
       curTempC = tC;
-      dataMutex.unlock();
-      set_ui_temperature(curTempC);
-    }
-
-    // GPS update via getPVT()
-    if (gpsOK && gnss.getPVT())
-    {
-      t = time(nullptr);
-      ts = gmtime(&t);
-      dataMutex.lock();
-      curLatDeg = gnss.getLatitude();
-      curLonDeg = gnss.getLongitude();
-      curAltM = gnss.getAltitudeMSL();
-      curSpeedMps = gnss.getGroundSpeed();
-      curCourseDeg = gnss.getHeading();
-      curAccM = gnss.getHorizontalAccEst() / 1000.0f;
-      gpsFix3D = (gnss.getFixType() == 3);
-      dataMutex.unlock();
-      set_ui_velocity(static_cast<int>(curSpeedMps * MM_TO_KPH));
-      // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
-      _rtc_localtime(time(NULL), &t1, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
-      set_ui_time(t1.tm_hour, t1.tm_min, t1.tm_sec);
-      // set_ui_time(1,2,3);
-      set_var_gps_online(true);
-    }
-    else
-    {
-      set_var_gps_online(false);
-    }
-
-    // Serial debug @5Hz
-    if (now - lastDebugMs >= 1000 / DEBUG_RATE_HZ && false)
-    {
-      lastDebugMs = now;
-      char buf[64];
-      snprintf(buf, sizeof(buf),
-               "%02d:%02d:%02d.%03ld",
-               ts->tm_hour, ts->tm_min, ts->tm_sec,
-               (long)(millis() % 1000));
-        
-      dataMutex.lock();
-      Serial.print("UTC ");
-      Serial.print(buf);
-      Serial.print(" °C ");
-      Serial.print(curTempC);
-      Serial.print(" Lat ");
-      Serial.print(curLatDeg, 6);
-      Serial.print(" Lon ");
-      Serial.print(curLonDeg, 6);
-      Serial.print(" Alt ");
-      Serial.print(curAltM);
-      Serial.print(" kph ");
-      Serial.print(curSpeedMps * MM_TO_KPH);
-      Serial.print(" Crs ");
-      Serial.print(curCourseDeg);
-      Serial.print(" Acc ");
-      Serial.print(curAccM);
-      Serial.print(" GPSOK ");
-      Serial.print(gpsOK);
-      Serial.print(" 3D? ");
-      Serial.println(gpsFix3D);
       dataMutex.unlock();
     }
 
@@ -408,22 +299,34 @@ void loggingTask()
         safeFileWrite(FILE_SENSOR_PATH, headerBuffer, 1);
       }
       // timestamp
+      const GnssSnapshot gps = readGnssSnapshot();
+      const bool gpsOK = gps.connection == GnssConnection::Receiving;
+      const bool gpsFix3D = gps.positionValid && gps.altitudeValid;
       char timeBuf[64];
       {
-        tm t;
+        tm t = {};
+        const uint32_t uptimeMs = millis();
+        // Preserve the original calendar-shaped column even before GNSS time
+        // is available: 1970 + uptime is an explicit placeholder, not trusted UTC.
+        const time_t logSeconds = gps.clockSynchronized ? time(nullptr) : uptimeMs / 1000;
         // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
-        _rtc_localtime(time(NULL), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
-        snprintf(timeBuf, sizeof(timeBuf),
+        if (_rtc_localtime(logSeconds, &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT)) {
+          snprintf(timeBuf, sizeof(timeBuf),
                 "%04d-%02d-%02d %02d:%02d:%02d.%03ld\t",
                 t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                 t.tm_hour, t.tm_min, t.tm_sec,
-                (long)(millis() % 1000));
+                (long)(uptimeMs % 1000));
+        } else {
+          snprintf(timeBuf, sizeof(timeBuf), "1970-01-01 00:00:00.000\t");
+        }
       }
 
       // RPM buffer
       dataMutex.lock();
-      String rline = String(timeBuf) + curRPM + "\n";
+      const float rpm = curRPM;
+      const float temperature = curTempC;
       dataMutex.unlock();
+      String rline = String(timeBuf) + rpm + "\n";
       rpmBuffer[rpmBufCount++] = rline;
       if (rpmBufCount >= USB_WRITE_BLOCK)
       {
@@ -432,9 +335,11 @@ void loggingTask()
       }
 
       // SENSOR buffer @10Hz
-      dataMutex.lock();
-      String sline = String(timeBuf) + curTempC + "\t" + curLatDeg + "\t" + curLonDeg + "\t" + (curAltM * MM_TO_M) + "\t" + (curSpeedMps * MM_TO_KPH) + "\t" + curCourseDeg + "\t" + curAccM + "\t" + gpsOK + "\t" + gpsFix3D + "\n";
-      dataMutex.unlock();
+      // Preserve the legacy ten-column schema; validity and epoch diagnostics
+      // remain in the in-memory GNSS snapshot, not additional log columns.
+      String sline = String(timeBuf) + temperature + "\t" + String(gps.latitudeDeg, 7) + "\t" +
+          String(gps.longitudeDeg, 7) + "\t" + gps.altitudeM + "\t" + gps.speedKph + "\t" +
+          gps.courseDeg + "\t" + gps.horizontalAccuracyM + "\t" + gpsOK + "\t" + gpsFix3D + "\n";
       sensorBuffer[sensorBufCount++] = sline;
       if (sensorBufCount >= USB_WRITE_BLOCK)
       {
@@ -453,38 +358,82 @@ void loggingTask()
 void displayTask()
 {
   uint32_t sleep_ms = 0;
+  RpmDisplayFilter rpmDisplayFilter;
   while (true) {
+    // Only this thread touches UI model buffers once the threads have started.
+    const GnssSnapshot gps = readGnssSnapshot();
+    dataMutex.lock();
+    const float rpm = curRPM;
+    const bool rpmWarning = curRpmWarning;
+    const float temperature = curTempC;
+    dataMutex.unlock();
+    set_var_motor_rpm(rpmDisplayFilter.update(rpm, millis()));
+    set_ui_rpm_warning(rpmWarning);
+    set_ui_temperature(temperature);
+    set_var_gps_online(gps.connection == GnssConnection::Receiving);
+    set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
+    tm utc = {};
+    if (gps.clockSynchronized && _rtc_localtime(time(nullptr), &utc, RTC_4_YEAR_LEAP_YEAR_SUPPORT))
+      set_ui_time(utc.tm_hour, utc.tm_min, utc.tm_sec);
+    else
+      set_ui_time_unavailable();
     sleep_ms = lv_task_handler();
     ui_tick();
-    rtos::ThisThread::sleep_for(milliseconds(sleep_ms));
+    // Refresh live values and the clock even if LVGL currently has no timers.
+    rtos::ThisThread::sleep_for(milliseconds(sleep_ms < 20 ? sleep_ms : 20));
   }
 }
 
 void rpmSensorTask()
 {
-    uint64_t lastPulseTimeSaved = 0;
-    bool last_zero = false;
+    uint32_t lastPulseTimeSaved = 0;
+    bool last_zero = true;
+    bool warning = false;
+    digitalWrite(PIN_RPM_OUT, LOW);
+    dataMutex.lock();
+    curRPM = 0;
+    curRpmWarning = warning;
+    dataMutex.unlock();
+
     while (true)
     {
-        uint32_t now = millis();
-        int delta_last_rpm_pulse = now - lastPulseTime / 1000;
-        if (lastPulseTimeSaved != lastPulseTime)
-        {
-            last_zero = false;
-            float rpm = delta_last_rpm_pulse < 150 ? microsToRPM(delta_rpm, 2) : 0;
-            curRPM = rpm;
+        uint32_t pulseTime;
+        uint32_t pulseDelta;
 
-            set_var_motor_rpm(rpm);
+        // Copy the ISR's pair consistently; all calculations and RTOS calls
+        // remain outside the interrupt-masked section.
+        core_util_critical_section_enter();
+        pulseTime = lastPulseTime;
+        pulseDelta = delta_rpm;
+        core_util_critical_section_exit();
+
+        // Read now after the snapshot, using the same wrapping clock as the ISR.
+        const uint32_t pulseAgeUs = static_cast<uint32_t>(micros()) - pulseTime;
+        if (lastPulseTimeSaved != pulseTime)
+        {
+            lastPulseTimeSaved = pulseTime;
+            const bool intervalValid = !last_zero && pulseDelta < RPM_PULSE_TIMEOUT_US;
+            last_zero = false;
+            // The first pulse after start/timeout is a new reference, not an RPM.
+            const float rpm = intervalValid && pulseAgeUs < RPM_PULSE_TIMEOUT_US
+                ? microsToRPM(pulseDelta, RPM_PULSE_PER_REV) : 0.0f;
             if (rpm > RPM_HYST_ON)
-                digitalWrite(PIN_RPM_OUT, HIGH);
-            if (rpm < RPM_HYST_OFF)
-                digitalWrite(PIN_RPM_OUT, LOW);
-        } else if (delta_last_rpm_pulse > 150 && !last_zero) {
+                warning = true;
+            else if (rpm < RPM_HYST_OFF)
+                warning = false;
+            digitalWrite(PIN_RPM_OUT, warning ? HIGH : LOW);
+            dataMutex.lock();
+            curRPM = rpm;
+            curRpmWarning = warning;
+            dataMutex.unlock();
+        } else if (pulseAgeUs >= RPM_PULSE_TIMEOUT_US && !last_zero) {
             last_zero = true;
-            float rpm = 0;
-            curRPM = 0;
-            set_var_motor_rpm(rpm);
+            warning = false;
             digitalWrite(PIN_RPM_OUT, LOW);
+            dataMutex.lock();
+            curRPM = 0;
+            curRpmWarning = warning;
+            dataMutex.unlock();
         }
         rtos::ThisThread::sleep_for(milliseconds(1));
     }
