@@ -36,7 +36,10 @@ extern "C" void set_var_motor_rpm(const int32_t value)
 
 void set_ui_velocity(const int32_t value)
 {
-    sprintf(velocity_text, "%ld", value < 10000 ? value : 9999);
+    if (value < 0)
+        velocity_text[0] = '\0'; // The generated speed font contains digits only.
+    else
+        snprintf(velocity_text, sizeof(velocity_text), "%ld", value < 10000 ? value : 9999);
 }
 
 void set_ui_temperature(const float_t value)
@@ -51,6 +54,12 @@ void set_ui_temperature(const float_t value)
 void set_ui_time(const uint_fast8_t hours, const uint_fast8_t minutes, const uint_fast8_t seconds)
 {
     sprintf(time_text, "%02i:%02i:%02i", (hours + 2) % 24, minutes, seconds);
+}
+
+void set_ui_time_unavailable()
+{
+    // Dots are available in the generated clock font; hyphens are not.
+    snprintf(time_text, sizeof(time_text), "...");
 }
 
 extern "C" int32_t get_var_motor_rpm()

@@ -1,0 +1,261 @@
+#include "gnss_service.h"
+#include "gnss_epoch.h"
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <mbed.h>
+#include <mbed_mktime.h>
+#include <cmath>
+#include <chrono>
+
+namespace {
+constexpr uint16_t COMMAND_TIMEOUT_MS = 250;
+constexpr uint16_t MEASUREMENT_MS = 200;
+constexpr uint32_t STALE_MS = 1500;
+constexpr uint32_t RATE_CHECK_MS = 10000;
+constexpr uint32_t STACK_BYTES = 4096;
+
+// The device and all library state are accessed exclusively by gnssTask().
+SFE_UBLOX_GNSS gnss;
+rtos::Mutex snapshotMutex;
+GnssSnapshot published;
+alignas(8) unsigned char gnssStack[STACK_BYTES];
+rtos::Thread gnssThread(osPriorityNormal, STACK_BYTES, gnssStack, "gnss");
+
+void invalidate(GnssSnapshot &s)
+{
+    s.positionValid = false;
+    s.altitudeValid = false;
+    s.timeValid = false;
+    s.latitudeDeg = s.longitudeDeg = NAN;
+    s.altitudeM = s.speedKph = s.courseDeg = s.horizontalAccuracyM = NAN;
+}
+
+void publish(const GnssSnapshot &s)
+{
+    snapshotMutex.lock();
+    published = s;
+    snapshotMutex.unlock();
+}
+
+// UTC conversion without mktime's timezone/DST interpretation. Reject invalid
+// calendars and leap seconds; this RTC application supports years 2000..2099.
+bool pvtUtc(const UBX_NAV_PVT_data_t &p, time_t &seconds, uint32_t &nanoseconds)
+{
+    if (!p.valid.bits.validDate || !p.valid.bits.validTime || !p.valid.bits.fullyResolved ||
+        p.year < 2000 || p.year > 2099 || p.month < 1 || p.month > 12 ||
+        p.day < 1 || p.day > 31 || p.hour > 23 || p.min > 59 || p.sec > 59 ||
+        p.nano < -1000000000 || p.nano > 1000000000)
+        return false;
+
+    tm calendar = {};
+    calendar.tm_year = p.year - 1900;
+    calendar.tm_mon = p.month - 1;
+    calendar.tm_mday = p.day;
+    calendar.tm_hour = p.hour;
+    calendar.tm_min = p.min;
+    calendar.tm_sec = p.sec;
+    tm checked = {};
+    if (!_rtc_maketime(&calendar, &seconds, RTC_4_YEAR_LEAP_YEAR_SUPPORT) ||
+        !_rtc_localtime(seconds, &checked, RTC_4_YEAR_LEAP_YEAR_SUPPORT) ||
+        checked.tm_year != calendar.tm_year || checked.tm_mon != calendar.tm_mon ||
+        checked.tm_mday != calendar.tm_mday || checked.tm_hour != calendar.tm_hour ||
+        checked.tm_min != calendar.tm_min || checked.tm_sec != calendar.tm_sec)
+        return false;
+
+    int64_t fraction = p.nano;
+    while (fraction < 0) { --seconds; fraction += 1000000000; }
+    while (fraction >= 1000000000) { ++seconds; fraction -= 1000000000; }
+    nanoseconds = static_cast<uint32_t>(fraction);
+    return true;
+}
+
+bool verifyRate()
+{
+    // Require a successful fresh CFG-RATE response. The simple getters alone
+    // can return cached values even after an unsuccessful communication attempt.
+    gnss.flushCFGRATE();
+    if (!gnss.getNavigationFrequencyInternal(COMMAND_TIMEOUT_MS))
+        return false;
+    const uint16_t measurement = gnss.getMeasurementRate(0);
+    const uint16_t navigation = gnss.getNavigationRate(0);
+    Serial.print("GNSS CFG-RATE: measRate_ms=");
+    Serial.print(measurement);
+    Serial.print(" navRate=");
+    Serial.println(navigation);
+    return measurement == MEASUREMENT_MS && navigation == 1;
+}
+
+bool setupGPS()
+{
+    if (!gnss.setI2COutput(COM_TYPE_UBX, COMMAND_TIMEOUT_MS) ||
+        !gnss.setAutoPVT(false, true, COMMAND_TIMEOUT_MS) ||
+        !gnss.setMeasurementRate(MEASUREMENT_MS, COMMAND_TIMEOUT_MS) ||
+        !gnss.setNavigationRate(1, COMMAND_TIMEOUT_MS) || !verifyRate())
+        return false;
+
+    // setNavigationFrequency(1) would overwrite 200 ms with 1000 ms. Do not use it.
+    if (!gnss.setAutoPVT(true, true, COMMAND_TIMEOUT_MS))
+        return false;
+    gnss.flushPVT();
+    return true;
+}
+
+void gnssTask()
+{
+    using std::chrono::milliseconds;
+    GnssSnapshot current;
+    invalidate(current);
+    uint32_t retryMs = 1000;
+    // Keep ordering history across reconnects, separately from public session IDs.
+    gnss_policy::EpochTracker epochs;
+
+    while (true) {
+        current.connection = GnssConnection::Searching;
+        invalidate(current);
+        publish(current);
+        // begin() performs at most three protocol attempts with this timeout.
+        // Underlying Wire timeouts still depend on the installed hardware driver.
+        if (!gnss.begin(Wire, 0x42, COMMAND_TIMEOUT_MS)) {
+            current.connection = GnssConnection::RetryWait;
+        } else {
+            current.connection = GnssConnection::Configuring;
+            publish(current);
+            if (!setupGPS()) {
+                current.connection = GnssConnection::ConfigError;
+                Serial.println("GNSS configuration failed; retrying");
+            } else {
+                const uint32_t nextSession = current.sessionId + 1;
+                const bool clockSynchronized = current.clockSynchronized;
+                current = GnssSnapshot{};
+                current.sessionId = nextSession;
+                current.clockSynchronized = clockSynchronized;
+                invalidate(current);
+                current.connection = GnssConnection::Receiving;
+                publish(current);
+                uint32_t lastNewPvt = millis();
+                uint32_t lastRateCheck = lastNewPvt;
+                uint8_t rateCheckFailures = 0;
+                gnss_policy::RateMonitor rate;
+
+                while (static_cast<uint32_t>(millis() - lastNewPvt) < STALE_MS) {
+                    // Auto-PVT checks available data instead of polling/waiting
+                    // for a reply. Stage 1 intentionally keeps only the latest PVT.
+                    if (gnss.getPVT(0)) {
+                        const UBX_NAV_PVT_data_t p = gnss.packetUBXNAVPVT->data;
+                        gnss.flushPVT();
+                        time_t utcSeconds = 0;
+                        uint32_t utcNanoseconds = 0;
+                        const bool timeValid = pvtUtc(p, utcSeconds, utcNanoseconds);
+                        const uint32_t now = millis();
+                        const auto epoch = epochs.observe(p.iTOW, now, timeValid,
+                            int64_t(utcSeconds) * 1000 + utcNanoseconds / 1000000);
+                        if (epoch == gnss_policy::EpochResult::Baseline ||
+                            epoch == gnss_policy::EpochResult::New) {
+                            lastNewPvt = now;
+                        }
+                        if (epoch == gnss_policy::EpochResult::Baseline) {
+                            rate = gnss_policy::RateMonitor{};
+                            if (current.sampleAvailable) {
+                                // Transition from provisional receiver time to
+                                // UTC: quarantine it through a fresh session.
+                                current.connection = GnssConnection::Stale;
+                                break;
+                            }
+                        }
+                        if (epoch == gnss_policy::EpochResult::New) {
+                            rate.observe(epochs.deltaMs(), epochs.hostDeltaMs());
+                            if (rate.faulty()) {
+                                current.connection = GnssConnection::RateError;
+                                invalidate(current);
+                                publish(current);
+                                Serial.println("GNSS persistent PVT epoch-rate mismatch; reconnecting");
+                                // Distinguish wrong CFG-RATE from reception gaps in diagnostics.
+                                verifyRate();
+                                break;
+                            }
+                            // Confirm three consecutive 200-ms steps before publishing
+                            // a new session. Never expose a lone buffered startup packet.
+                            if (!current.sampleAvailable && !rate.ready()) {
+                                rtos::ThisThread::sleep_for(milliseconds(10));
+                                continue;
+                            }
+                            current.epochDeltaMs = epochs.deltaMs();
+                            current.iTowMs = p.iTOW;
+                            current.receivedMs = lastNewPvt;
+                            current.sampleAvailable = true;
+                            ++current.sampleId;
+                            current.fixType = p.fixType;
+                            current.positionValid = p.flags.bits.gnssFixOK && !p.flags3.bits.invalidLlh &&
+                                (p.fixType == 2 || p.fixType == 3 || p.fixType == 4);
+                            current.altitudeValid = current.positionValid && p.fixType != 2;
+                            current.latitudeDeg = current.positionValid ? p.lat * 1e-7 : NAN;
+                            current.longitudeDeg = current.positionValid ? p.lon * 1e-7 : NAN;
+                            current.altitudeM = current.altitudeValid ? p.hMSL * 0.001f : NAN;
+                            current.speedKph = current.positionValid ? p.gSpeed * 0.0036f : NAN;
+                            current.courseDeg = current.positionValid ? p.headMot * 1e-5f : NAN;
+                            current.horizontalAccuracyM = current.positionValid ? p.hAcc * 0.001f : NAN;
+                            current.timeValid = timeValid;
+                            current.utcSeconds = timeValid ? utcSeconds : 0;
+                            current.utcNanoseconds = timeValid ? utcNanoseconds : 0;
+                            // Set the RTC once per firmware boot, not per receiver
+                            // connection. Reconnects cannot step the running clock
+                            // backwards (or forwards); later drift correction is deferred.
+                            if (current.timeValid && !current.clockSynchronized) {
+                                set_time(current.utcSeconds);
+                                current.clockSynchronized = true;
+                            }
+                            retryMs = 1000;
+                            publish(current);
+                        }
+                    }
+                    if (static_cast<uint32_t>(millis() - lastRateCheck) >= RATE_CHECK_MS) {
+                        lastRateCheck = millis();
+                        // One lost/late CFG response must not reset the receiver.
+                        rateCheckFailures = verifyRate() ? 0 : rateCheckFailures + 1;
+                        if (rateCheckFailures >= 2) {
+                            current.connection = GnssConnection::RateError;
+                            break;
+                        }
+                    }
+                    rtos::ThisThread::sleep_for(milliseconds(10));
+                }
+                if (current.connection != GnssConnection::RateError) {
+                    current.connection = GnssConnection::Stale;
+                    Serial.println("GNSS PVT stream stale; reconnecting");
+                }
+                invalidate(current);
+            }
+        }
+        publish(current);
+        rtos::ThisThread::sleep_for(milliseconds(retryMs));
+        if (retryMs < 8000) retryMs *= 2;
+    }
+}
+} // namespace
+
+bool startGnss()
+{
+    GnssSnapshot initial;
+    invalidate(initial);
+    publish(initial);
+    if (gnssThread.start(gnssTask) == osOK) return true;
+    initial.connection = GnssConnection::ThreadError;
+    publish(initial);
+    return false;
+}
+
+GnssSnapshot readGnssSnapshot()
+{
+    snapshotMutex.lock();
+    GnssSnapshot copy = published;
+    snapshotMutex.unlock();
+    if (!copy.sampleAvailable) invalidate(copy);
+    if (copy.connection == GnssConnection::Receiving && copy.sampleAvailable &&
+        static_cast<uint32_t>(millis() - copy.receivedMs) >= STALE_MS) {
+        copy.connection = GnssConnection::Stale;
+        invalidate(copy);
+    }
+    return copy;
+}
