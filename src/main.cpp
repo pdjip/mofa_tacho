@@ -84,7 +84,10 @@ uint8_t headerBufCount = 0;
 
 rtos::Thread sensorThread;
 rtos::Thread loggingThread;
-rtos::Thread displayThread;
+// LVGL draws synchronously inside each widget's draw event. Measured peak on
+// the board (RTX watermark, self-test + live UI): 4.6 KB, more than the 4 KB
+// mbed default. 8 KB leaves headroom for UI changes in EEZ Studio.
+rtos::Thread displayThread(osPriorityNormal, 8 * 1024);
 rtos::Thread rpmSensorThread;
 
 Arduino_H7_Video Display(800, 480, GigaDisplayShield);
