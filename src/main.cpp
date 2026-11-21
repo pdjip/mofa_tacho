@@ -371,6 +371,7 @@ void displayTask()
     set_ui_rpm_warning(rpmWarning);
     set_ui_temperature(temperature);
     set_var_gps_online(gps.connection == GnssConnection::Receiving);
+    set_ui_gps_status(gps);
     set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
     tm utc = {};
     if (gps.clockSynchronized && _rtc_localtime(time(nullptr), &utc, RTC_4_YEAR_LEAP_YEAR_SUPPORT))

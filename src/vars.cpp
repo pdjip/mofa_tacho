@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "ui/vars.h"
 #include "vars.h"
+#include "gnss_service.h"
 
 #include <stdio.h>
 
@@ -11,6 +12,10 @@ char velocity_text[20] = "0";
 char temperature_text[20] = "0.0";
 char time_text[20] = "99:99:99";
 bool gps_online = false;
+char gps_status_text[24] = "GPS: searching";
+bool hide_gps_ok = true;
+bool hide_gps_busy = false;
+bool hide_gps_error = true;
 
 extern "C" void set_var_motor_rpm(const int32_t value)
 {
@@ -48,6 +53,56 @@ void set_ui_temperature(const float_t value)
 void set_ui_time(const uint_fast8_t hours, const uint_fast8_t minutes, const uint_fast8_t seconds)
 {
     sprintf(time_text, "%02i:%02i:%02i", (hours + 2) % 24, minutes, seconds);
+}
+
+void set_ui_gps_status(const GnssSnapshot &gps)
+{
+    enum class Level { Busy, Ok, Error };
+    const char *text = "GPS: searching";
+    Level level = Level::Busy;
+
+    switch (gps.connection)
+    {
+    case GnssConnection::Searching:
+        text = "GPS: searching";
+        break;
+    case GnssConnection::Configuring:
+        text = "GPS: starting";
+        break;
+    case GnssConnection::Receiving:
+        if (gps.positionValid)
+        {
+            text = gps.altitudeValid ? "GPS: 3D fix" : "GPS: 2D fix";
+            level = Level::Ok;
+        }
+        else
+            text = "GPS: no fix";
+        break;
+    case GnssConnection::Stale:
+        text = "GPS: signal lost";
+        level = Level::Error;
+        break;
+    case GnssConnection::RetryWait:
+        text = "GPS: retrying";
+        break;
+    case GnssConnection::ConfigError:
+        text = "GPS: config error";
+        level = Level::Error;
+        break;
+    case GnssConnection::RateError:
+        text = "GPS: rate error";
+        level = Level::Error;
+        break;
+    case GnssConnection::ThreadError:
+        text = "GPS: thread error";
+        level = Level::Error;
+        break;
+    }
+
+    snprintf(gps_status_text, sizeof(gps_status_text), "%s", text);
+    hide_gps_ok = level != Level::Ok;
+    hide_gps_busy = level != Level::Busy;
+    hide_gps_error = level != Level::Error;
 }
 
 void set_ui_time_unavailable()
@@ -118,4 +173,40 @@ extern "C" void set_var_velocity_text(const char *value)
 extern "C" void set_var_gps_online(const bool value)
 {
     gps_online = !value;
+}
+
+extern "C" const char *get_var_gps_status_text()
+{
+    return gps_status_text;
+}
+
+extern "C" bool get_var_hide_gps_ok()
+{
+    return hide_gps_ok;
+}
+
+extern "C" bool get_var_hide_gps_busy()
+{
+    return hide_gps_busy;
+}
+
+extern "C" bool get_var_hide_gps_error()
+{
+    return hide_gps_error;
+}
+
+extern "C" void set_var_gps_status_text(const char *value)
+{
+}
+
+extern "C" void set_var_hide_gps_ok(bool value)
+{
+}
+
+extern "C" void set_var_hide_gps_busy(bool value)
+{
+}
+
+extern "C" void set_var_hide_gps_error(bool value)
+{
 }
