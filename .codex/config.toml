@@ -1,0 +1,11 @@
+# Projektvorgaben; AGENTS.md und docs/agent-team.md regeln die Phasenfreigaben.
+# Kein fester Sandbox-Modus: wirksame Sitzungsrechte vor Schreibphasen prüfen.
+# Diese Einstellungen verändern nicht rückwirkend die laufende Sitzung.
+approval_policy = "on-request"
+approvals_reviewer = "user"
+
+[agents]
+enabled = true
+# Offene Subagenten-Threads, ohne TARS; zugleich höchstens zwei aktive Subagenten.
+max_concurrent_threads_per_session = 2
+interrupt_message = true
