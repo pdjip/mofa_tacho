@@ -15,6 +15,9 @@ constexpr int32_t SPEED_MAX_KPH = 199;
 constexpr float TEMPERATURE_MIN_C = -40.0f; // Below zero so the '-' glyph is shown.
 constexpr float TEMPERATURE_MAX_C = 120.0f;
 constexpr uint8_t GPS_STEPS = 10; // One step per GNSS status text, in this order.
+constexpr uint8_t USB_STEPS = 4;  // One step per USB status text, in this order.
+
+enum class UsbStep : uint8_t { NoStick, Mounting, Logging, Error };
 
 enum class GpsStep : uint8_t {
     Searching, Configuring, NoFix, Fix2D, Fix3D, Stale, RetryWait, ConfigError, RateError, ThreadError
@@ -26,6 +29,7 @@ struct Frame {
     float temperatureC;
     bool rpmWarning;
     GpsStep gps;
+    UsbStep usb;
 };
 
 constexpr bool active(uint32_t elapsedMs)
@@ -46,6 +50,7 @@ constexpr Frame frame(uint32_t elapsedMs)
         TEMPERATURE_MIN_C + progress * (TEMPERATURE_MAX_C - TEMPERATURE_MIN_C),
         t >= 1000 && t < 2000, // Warning icon visible around the peak.
         static_cast<GpsStep>(t * GPS_STEPS / (DURATION_MS + 1)),
+        static_cast<UsbStep>(t * USB_STEPS / (DURATION_MS + 1)),
     };
 }
 

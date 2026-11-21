@@ -34,6 +34,10 @@ typedef struct _objects_t {
     lv_obj_t *obj12;
     lv_obj_t *obj13;
     lv_obj_t *obj14;
+    lv_obj_t *obj15;
+    lv_obj_t *obj16;
+    lv_obj_t *obj17;
+    lv_obj_t *obj18;
 } objects_t;
 
 extern objects_t objects;

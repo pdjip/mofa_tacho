@@ -18,6 +18,10 @@ char gps_status_text[24] = "GPS: searching";
 bool hide_gps_ok = true;
 bool hide_gps_busy = false;
 bool hide_gps_error = true;
+char usb_status_text[24] = "USB: no stick";
+bool hide_usb_ok = true;
+bool hide_usb_busy = false;
+bool hide_usb_error = true;
 
 extern "C" void set_var_motor_rpm(const int32_t value)
 {
@@ -115,6 +119,23 @@ void set_ui_gps_status(const GnssSnapshot &gps)
     hide_gps_error = level != Level::Error;
 }
 
+void set_ui_usb_status(const UsbState state)
+{
+    const char *text = "USB: no stick";
+    bool ok = false, error = false;
+    switch (state)
+    {
+    case UsbState::NoStick:  text = "USB: no stick"; break; // Not logging: amber.
+    case UsbState::Mounting: text = "USB: mounting"; break;
+    case UsbState::Logging:  text = "USB: logging"; ok = true; break;
+    case UsbState::Error:    text = "USB: error"; error = true; break;
+    }
+    snprintf(usb_status_text, sizeof(usb_status_text), "%s", text);
+    hide_usb_ok = !ok;
+    hide_usb_busy = ok || error;
+    hide_usb_error = !error;
+}
+
 void set_ui_self_test(const ui_self_test::Frame &frame)
 {
     using ui_self_test::GpsStep;
@@ -148,6 +169,14 @@ void set_ui_self_test(const ui_self_test::Frame &frame)
     case GpsStep::ThreadError: gps.connection = GnssConnection::ThreadError; break;
     }
     set_ui_gps_status(gps);
+
+    switch (frame.usb)
+    {
+    case ui_self_test::UsbStep::NoStick:  set_ui_usb_status(UsbState::NoStick); break;
+    case ui_self_test::UsbStep::Mounting: set_ui_usb_status(UsbState::Mounting); break;
+    case ui_self_test::UsbStep::Logging:  set_ui_usb_status(UsbState::Logging); break;
+    case ui_self_test::UsbStep::Error:    set_ui_usb_status(UsbState::Error); break;
+    }
 }
 
 void set_ui_time_unavailable()
@@ -234,6 +263,15 @@ extern "C" bool get_var_hide_gps_busy()
 {
     return hide_gps_busy;
 }
+
+extern "C" const char *get_var_usb_status_text() { return usb_status_text; }
+extern "C" bool get_var_hide_usb_ok() { return hide_usb_ok; }
+extern "C" bool get_var_hide_usb_busy() { return hide_usb_busy; }
+extern "C" bool get_var_hide_usb_error() { return hide_usb_error; }
+extern "C" void set_var_usb_status_text(const char *value) {}
+extern "C" void set_var_hide_usb_ok(bool value) {}
+extern "C" void set_var_hide_usb_busy(bool value) {}
+extern "C" void set_var_hide_usb_error(bool value) {}
 
 extern "C" bool get_var_hide_gps_error()
 {

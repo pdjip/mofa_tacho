@@ -23,7 +23,11 @@ enum FlowGlobalVariables {
     FLOW_GLOBAL_VARIABLE_GPS_STATUS_TEXT = 7,
     FLOW_GLOBAL_VARIABLE_HIDE_GPS_OK = 8,
     FLOW_GLOBAL_VARIABLE_HIDE_GPS_BUSY = 9,
-    FLOW_GLOBAL_VARIABLE_HIDE_GPS_ERROR = 10
+    FLOW_GLOBAL_VARIABLE_HIDE_GPS_ERROR = 10,
+    FLOW_GLOBAL_VARIABLE_USB_STATUS_TEXT = 11,
+    FLOW_GLOBAL_VARIABLE_HIDE_USB_OK = 12,
+    FLOW_GLOBAL_VARIABLE_HIDE_USB_BUSY = 13,
+    FLOW_GLOBAL_VARIABLE_HIDE_USB_ERROR = 14
 };
 
 // Native global variables
@@ -50,6 +54,14 @@ extern bool get_var_hide_gps_busy();
 extern void set_var_hide_gps_busy(bool value);
 extern bool get_var_hide_gps_error();
 extern void set_var_hide_gps_error(bool value);
+extern const char *get_var_usb_status_text();
+extern void set_var_usb_status_text(const char *value);
+extern bool get_var_hide_usb_ok();
+extern void set_var_hide_usb_ok(bool value);
+extern bool get_var_hide_usb_busy();
+extern void set_var_hide_usb_busy(bool value);
+extern bool get_var_hide_usb_error();
+extern void set_var_hide_usb_error(bool value);
 
 #ifdef __cplusplus
 }

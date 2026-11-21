@@ -62,6 +62,7 @@ USBHostMSD msd;
 mbed::FATFileSystem fs("usb");
 volatile bool usbAttachedFlag = false;
 volatile bool usbMountedFlag = false;
+volatile bool usbFaultFlag = false; // Mount failed or a file write failed; cleared by the next success.
 
 OneWire oneWire(PIN_ONEWIRE_BUS);
 DallasTemperature sensors_DS(&oneWire);
@@ -182,6 +183,7 @@ void usbDetachHandler()
 {
   usbAttachedFlag = false;
   usbMountedFlag = false;
+  usbFaultFlag = false;
   unmountUSB();
 }
 
@@ -206,6 +208,7 @@ void mountUSB()
       {
         Serial.println("USB mounted & files reset");
         usbMountedFlag = true;
+        usbFaultFlag = false;
         safeFileWrite(FILE_RPM_PATH, nullptr, 0);
         safeFileWrite(FILE_SENSOR_PATH, nullptr, 0);
         break;
@@ -220,6 +223,8 @@ void mountUSB()
       Serial.println("USB connect failed");
     }
   }
+  if (!usbMountedFlag)
+    usbFaultFlag = true;
 }
 
 void unmountUSB()
@@ -244,6 +249,7 @@ void safeFileWrite(const char *path, String lines[], uint8_t count)
   {
     Serial.print("File open error: ");
     Serial.println(path);
+    usbFaultFlag = true;
     return;
   }
   for (uint8_t i = 0; i < count; ++i)
@@ -251,6 +257,7 @@ void safeFileWrite(const char *path, String lines[], uint8_t count)
     fputs(lines[i].c_str(), f);
   }
   fclose(f);
+  usbFaultFlag = false;
 }
 
 //=============================================================================
@@ -388,6 +395,10 @@ void displayTask()
     set_ui_temperature(temperature);
     set_var_gps_online(gps.connection == GnssConnection::Receiving);
     set_ui_gps_status(gps);
+    set_ui_usb_status(!usbAttachedFlag ? UsbState::NoStick
+                      : usbFaultFlag   ? UsbState::Error
+                      : usbMountedFlag ? UsbState::Logging
+                                       : UsbState::Mounting);
     set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
     if (gps.clockSynchronized)
       set_ui_time(time(nullptr)); // RTC holds UTC; the helper applies CET/CEST.
