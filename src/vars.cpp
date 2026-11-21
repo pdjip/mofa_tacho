@@ -80,8 +80,9 @@ void set_ui_gps_status(const GnssSnapshot &gps)
             text = "GPS: no fix";
         break;
     case GnssConnection::Stale:
-        text = "GPS: signal lost";
-        level = Level::Error;
+        // Also set deliberately once UTC becomes valid (planned new session),
+        // so it is a reconnect in progress, not a fault.
+        text = "GPS: reconnecting";
         break;
     case GnssConnection::RetryWait:
         text = "GPS: retrying";

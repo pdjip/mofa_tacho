@@ -360,6 +360,7 @@ void displayTask()
   uint32_t sleep_ms = 0;
   RpmDisplayFilter rpmDisplayFilter;
   const uint32_t selfTestStartMs = millis();
+  bool selfTestRunning = true;
   while (true) {
     // Only this thread touches UI model buffers once the threads have started.
     const GnssSnapshot gps = readGnssSnapshot();
@@ -380,9 +381,14 @@ void displayTask()
     else
       set_ui_time_unavailable();
     // Startup sweep over every display element; overrides the live values above.
-    const uint32_t selfTestMs = millis() - selfTestStartMs;
-    if (ui_self_test::active(selfTestMs))
-      set_ui_self_test(ui_self_test::frame(selfTestMs));
+    // One-shot: the millis() difference wraps after ~49.7 days and must not
+    // restart the sweep while riding.
+    if (selfTestRunning) {
+      const uint32_t selfTestMs = millis() - selfTestStartMs;
+      selfTestRunning = ui_self_test::active(selfTestMs);
+      if (selfTestRunning)
+        set_ui_self_test(ui_self_test::frame(selfTestMs));
+    }
     sleep_ms = lv_task_handler();
     ui_tick();
     // Refresh live values and the clock even if LVGL currently has no timers.
