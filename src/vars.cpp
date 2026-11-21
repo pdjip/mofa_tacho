@@ -3,6 +3,7 @@
 #include "vars.h"
 #include "gnss_service.h"
 #include "ui_self_test.h"
+#include "local_time.h"
 
 #include <stdio.h>
 
@@ -44,16 +45,21 @@ void set_ui_velocity(const int32_t value)
 
 void set_ui_temperature(const float_t value)
 {
+    // DallasTemperature reports a missing sensor as -127. Sub-zero readings are
+    // real and need the '-' glyph of ui_font_digital_72 (range 45 in the EEZ
+    // project); a fault shows as "--.-" instead of looking like 0 degrees.
     if (value > -120.0) {
         sprintf(temperature_text, "%.1f", value);
     } else {
-        sprintf(temperature_text, "%s", "000");
+        sprintf(temperature_text, "%s", "--.-");
     }
 }
 
-void set_ui_time(const uint_fast8_t hours, const uint_fast8_t minutes, const uint_fast8_t seconds)
+void set_ui_time(const int64_t utcSeconds)
 {
-    sprintf(time_text, "%02i:%02i:%02i", (hours + 2) % 24, minutes, seconds);
+    const int32_t second = local_time::localSecondOfDay(utcSeconds);
+    snprintf(time_text, sizeof(time_text), "%02ld:%02ld:%02ld", long(second / 3600),
+             long(second / 60 % 60), long(second % 60));
 }
 
 void set_ui_gps_status(const GnssSnapshot &gps)
@@ -144,7 +150,7 @@ void set_ui_self_test(const ui_self_test::Frame &frame)
 
 void set_ui_time_unavailable()
 {
-    // Dots are available in the generated clock font; hyphens are not.
+    // Placeholder until the first valid GNSS time has set the RTC.
     snprintf(time_text, sizeof(time_text), "...");
 }
 
