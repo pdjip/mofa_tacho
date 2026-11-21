@@ -25,6 +25,7 @@
 #include "vars.h"
 #include "rpm_display_filter.h"
 #include "gnss_service.h"
+#include "log_clock.h"
 
 #include "ui/ui.h"
 #include "ui/vars.h"
@@ -287,6 +288,7 @@ void loggingTask()
 
   String rpmHeader = "Time_UTC\tRPM_Umin-1\n";
   String sensorHeader = "Time_UTC\tTemp_C\tLat_deg\tLon_deg\tAlt_m\tSpeed_kmh\tCourse_deg\tAcc_ms-1\tgpsOK_1\tgpsFix3D_1\n";
+  log_clock::Clock logClock; // One monotonic clock for both log files, see log_clock.h.
 
   while (true)
   {
@@ -308,17 +310,19 @@ void loggingTask()
       char timeBuf[64];
       {
         tm t = {};
-        const uint32_t uptimeMs = millis();
-        // Preserve the original calendar-shaped column even before GNSS time
-        // is available: 1970 + uptime is an explicit placeholder, not trusted UTC.
-        const time_t logSeconds = gps.clockSynchronized ? time(nullptr) : uptimeMs / 1000;
-        // _rtc_localtime uses the system time in seconds since epoch to get the local time structure
-        if (_rtc_localtime(logSeconds, &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT)) {
+        // Seconds and milliseconds both come from one clock, anchored on the
+        // first GNSS time sample. Before that it is 1970 + uptime, an explicit
+        // placeholder that keeps the calendar-shaped column, not trusted UTC.
+        if (gps.timeValid)
+          logClock.sync(int64_t(gps.utcSeconds) * 1000 + gps.utcNanoseconds / 1000000, gps.receivedMs);
+        const int64_t logMs = logClock.timeMs(millis());
+        // _rtc_localtime converts seconds since epoch to a calendar structure (UTC)
+        if (_rtc_localtime(static_cast<time_t>(logMs / 1000), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT)) {
           snprintf(timeBuf, sizeof(timeBuf),
                 "%04d-%02d-%02d %02d:%02d:%02d.%03ld\t",
                 t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                 t.tm_hour, t.tm_min, t.tm_sec,
-                (long)(uptimeMs % 1000));
+                (long)(logMs % 1000));
         } else {
           snprintf(timeBuf, sizeof(timeBuf), "1970-01-01 00:00:00.000\t");
         }
@@ -378,9 +382,8 @@ void displayTask()
     set_var_gps_online(gps.connection == GnssConnection::Receiving);
     set_ui_gps_status(gps);
     set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
-    tm utc = {};
-    if (gps.clockSynchronized && _rtc_localtime(time(nullptr), &utc, RTC_4_YEAR_LEAP_YEAR_SUPPORT))
-      set_ui_time(utc.tm_hour, utc.tm_min, utc.tm_sec);
+    if (gps.clockSynchronized)
+      set_ui_time(time(nullptr)); // RTC holds UTC; the helper applies CET/CEST.
     else
       set_ui_time_unavailable();
     // Startup sweep over every display element; overrides the live values above.

@@ -12,6 +12,7 @@ namespace ui_self_test {
 constexpr uint32_t DURATION_MS = 3000;
 constexpr int32_t RPM_MAX = 20000;
 constexpr int32_t SPEED_MAX_KPH = 199;
+constexpr float TEMPERATURE_MIN_C = -40.0f; // Below zero so the '-' glyph is shown.
 constexpr float TEMPERATURE_MAX_C = 120.0f;
 constexpr uint8_t GPS_STEPS = 10; // One step per GNSS status text, in this order.
 
@@ -42,7 +43,7 @@ constexpr Frame frame(uint32_t elapsedMs)
     return Frame{
         static_cast<int32_t>(progress * float(RPM_MAX)),
         static_cast<int32_t>(progress * float(SPEED_MAX_KPH)),
-        progress * TEMPERATURE_MAX_C,
+        TEMPERATURE_MIN_C + progress * (TEMPERATURE_MAX_C - TEMPERATURE_MIN_C),
         t >= 1000 && t < 2000, // Warning icon visible around the peak.
         static_cast<GpsStep>(t * GPS_STEPS / (DURATION_MS + 1)),
     };
