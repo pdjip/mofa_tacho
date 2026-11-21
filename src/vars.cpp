@@ -2,6 +2,7 @@
 #include "ui/vars.h"
 #include "vars.h"
 #include "gnss_service.h"
+#include "ui_self_test.h"
 
 #include <stdio.h>
 
@@ -103,6 +104,41 @@ void set_ui_gps_status(const GnssSnapshot &gps)
     hide_gps_ok = level != Level::Ok;
     hide_gps_busy = level != Level::Busy;
     hide_gps_error = level != Level::Error;
+}
+
+void set_ui_self_test(const ui_self_test::Frame &frame)
+{
+    using ui_self_test::GpsStep;
+
+    set_var_motor_rpm(frame.rpm);
+    set_ui_rpm_warning(frame.rpmWarning);
+    set_ui_velocity(frame.speedKph);
+    set_ui_temperature(frame.temperatureC);
+    snprintf(time_text, sizeof(time_text), "88:88:88"); // Lights every clock segment.
+    set_var_gps_online(true);                           // Satellite icon visible.
+
+    GnssSnapshot gps;
+    switch (frame.gps)
+    {
+    case GpsStep::Searching:   gps.connection = GnssConnection::Searching; break;
+    case GpsStep::Configuring: gps.connection = GnssConnection::Configuring; break;
+    case GpsStep::NoFix:       gps.connection = GnssConnection::Receiving; break;
+    case GpsStep::Fix2D:
+        gps.connection = GnssConnection::Receiving;
+        gps.positionValid = true;
+        break;
+    case GpsStep::Fix3D:
+        gps.connection = GnssConnection::Receiving;
+        gps.positionValid = true;
+        gps.altitudeValid = true;
+        break;
+    case GpsStep::Stale:       gps.connection = GnssConnection::Stale; break;
+    case GpsStep::RetryWait:   gps.connection = GnssConnection::RetryWait; break;
+    case GpsStep::ConfigError: gps.connection = GnssConnection::ConfigError; break;
+    case GpsStep::RateError:   gps.connection = GnssConnection::RateError; break;
+    case GpsStep::ThreadError: gps.connection = GnssConnection::ThreadError; break;
+    }
+    set_ui_gps_status(gps);
 }
 
 void set_ui_time_unavailable()
