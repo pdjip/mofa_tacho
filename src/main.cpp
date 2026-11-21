@@ -84,7 +84,10 @@ uint8_t headerBufCount = 0;
 
 rtos::Thread sensorThread;
 rtos::Thread loggingThread;
-rtos::Thread displayThread;
+// LVGL draws synchronously inside each widget's draw event. Measured peak on
+// the board (RTX watermark, self-test + live UI): 4.6 KB, more than the 4 KB
+// mbed default. 8 KB leaves headroom for UI changes in EEZ Studio.
+rtos::Thread displayThread(osPriorityNormal, 8 * 1024);
 rtos::Thread rpmSensorThread;
 
 Arduino_H7_Video Display(800, 480, GigaDisplayShield);
@@ -359,6 +362,8 @@ void displayTask()
 {
   uint32_t sleep_ms = 0;
   RpmDisplayFilter rpmDisplayFilter;
+  const uint32_t selfTestStartMs = millis();
+  bool selfTestRunning = true;
   while (true) {
     // Only this thread touches UI model buffers once the threads have started.
     const GnssSnapshot gps = readGnssSnapshot();
@@ -371,12 +376,22 @@ void displayTask()
     set_ui_rpm_warning(rpmWarning);
     set_ui_temperature(temperature);
     set_var_gps_online(gps.connection == GnssConnection::Receiving);
+    set_ui_gps_status(gps);
     set_ui_velocity(gps.positionValid ? static_cast<int32_t>(gps.speedKph) : -1);
     tm utc = {};
     if (gps.clockSynchronized && _rtc_localtime(time(nullptr), &utc, RTC_4_YEAR_LEAP_YEAR_SUPPORT))
       set_ui_time(utc.tm_hour, utc.tm_min, utc.tm_sec);
     else
       set_ui_time_unavailable();
+    // Startup sweep over every display element; overrides the live values above.
+    // One-shot: the millis() difference wraps after ~49.7 days and must not
+    // restart the sweep while riding.
+    if (selfTestRunning) {
+      const uint32_t selfTestMs = millis() - selfTestStartMs;
+      selfTestRunning = ui_self_test::active(selfTestMs);
+      if (selfTestRunning)
+        set_ui_self_test(ui_self_test::frame(selfTestMs));
+    }
     sleep_ms = lv_task_handler();
     ui_tick();
     // Refresh live values and the clock even if LVGL currently has no timers.
