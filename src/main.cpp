@@ -198,12 +198,17 @@ void mountUSB()
     {
       Serial.print("msd.connect() → ");
       Serial.println(okConnect);
-      int mountCode = fs.mount(&msd);
-      mountCode = errno;
-      Serial.print("ERR mount = ");
-      Serial.println(strerror(mountCode));
+      // mount() returns 0 or a negative errno. errno itself is only meaningful
+      // right after a failure; a stale value (for example EINVAL left behind by
+      // another call) must not turn a successful mount into a failed one.
+      const int mountCode = fs.mount(&msd);
       Serial.print("fs.mount() → ");
       Serial.println(mountCode);
+      if (mountCode != 0)
+      {
+        Serial.print("ERR mount = ");
+        Serial.println(strerror(mountCode < 0 ? -mountCode : mountCode));
+      }
       if (okConnect && mountCode == 0)
       {
         Serial.println("USB mounted & files reset");
