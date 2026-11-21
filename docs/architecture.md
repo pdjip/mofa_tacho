@@ -4,11 +4,11 @@
 
 Diese Übersicht beschreibt den Quelltext im Repository, keine geplante Architektur. Grundlage sind die Projektdateien, insbesondere [AGENTS.md](../AGENTS.md), [platformio.ini](../platformio.ini), [src/main.cpp](../src/main.cpp), [src/gnss_service.cpp](../src/gnss_service.cpp), [src/vars.cpp](../src/vars.cpp) und [mofa.eez-project](../mofa.eez-project) einschließlich der generierten Dateien unter `src/ui`.
 
-Prüfstand dieser Fassung:
+Prüfstand dieser Fassung: **Quellstand `develop`, Commit `0e174bb`**. Für diese Dokumentationskorrektur wurden keine Builds oder Tests ausgeführt.
 
-- **Build:** `pio run -e giga_r1_m7` läuft fehlerfrei durch (Flash 60,6 % von 786 432 Byte, RAM 24,6 %).
-- **Richtlinientests:** Die vier Dateien unter `test/` werden vom Compiler ausgewertet (siehe Abschnitt 1) und bestehen. Ein Build führt sie nicht aus.
-- **Hardware:** Gemessen wurden nur die Stackspitzen der Threads auf dem Board (Abschnitt 2). Während dieser Messung lieferte der GNSS-Empfänger keine Epochen. Alle anderen Aussagen über das Laufzeitverhalten sind aus dem Code abgeleitet; unklare oder nicht nachgewiesene Eigenschaften sind ausdrücklich gekennzeichnet.
+- **Früherer Buildbefund (für `0e174bb` nicht erneut geprüft):** `pio run -e giga_r1_m7` läuft fehlerfrei durch (Flash 60,6 % von 786 432 Byte, RAM 24,6 %).
+- **Richtlinientests:** Im aktuellen Quellstand liegen fünf Compile-only-Testdateien unter `test/`. Sie werden vom PlatformIO-Firmwarebuild nicht ausgeführt; ein erneutes Testergebnis liegt für diese Prüfung nicht vor.
+- **Frühere Hardwaremessung (für `0e174bb` nicht wiederholt):** Gemessen wurden nur die Stackspitzen der Threads auf dem Board (Abschnitt 2). Während dieser Messung lieferte der GNSS-Empfänger keine Epochen. Alle anderen Aussagen über das Laufzeitverhalten sind aus dem Code abgeleitet; unklare oder nicht nachgewiesene Eigenschaften sind ausdrücklich gekennzeichnet.
 
 Die Zielhardware ist laut `AGENTS.md` der Arduino GIGA R1 M7 mit STM32H747 und Cortex-M7. Das Framework ist Arduino Mbed; `platformio.ini` verwendet die Plattform `ststm32`, das Board `giga_r1_m7`, `framework = arduino` und die Build-Umgebung `giga_r1_m7`. Eine Firmware für den zweiten Prozessorkern oder eine Kommunikation mit ihm ist nicht enthalten.
 
@@ -26,13 +26,13 @@ Die Zielhardware ist laut `AGENTS.md` der Arduino GIGA R1 M7 mit STM32H747 und C
 | [src/vars.h](../src/vars.h), [vars.cpp](../src/vars.cpp) | UI-Datenmodell und Textpuffer. Helfer: `set_ui_velocity()`, `set_ui_temperature()`, `set_ui_time(int64_t utcSeconds)`, `set_ui_time_unavailable()`, `set_ui_rpm_warning()`, `set_ui_gps_status()`, `set_ui_self_test()`. Implementiert zudem die von EEZ erwarteten C-Getter und -Setter. |
 | [src/ui/ui.c](../src/ui/ui.c), [ui.h](../src/ui/ui.h) | Generierter UI-Einstieg mit `ui_init()`, `ui_tick()` und `loadScreen()`. |
 | [src/ui/screens.c](../src/ui/screens.c), [screens.h](../src/ui/screens.h) | Erzeugt den einzigen Bildschirm `Main`, hält LVGL-Objektzeiger in `objects_t` und aktualisiert die Widgets über Getter. |
-| [src/ui/vars.h](../src/ui/vars.h) | Generierte Schnittstelle mit elf UI-Variablen; von `src/vars.h` zu unterscheiden. |
+| [src/ui/vars.h](../src/ui/vars.h) | Generierte Schnittstelle mit 15 UI-Variablen; von `src/vars.h` zu unterscheiden. |
 | [src/ui/images.c](../src/ui/images.c), [images.h](../src/ui/images.h), `src/ui/ui_image_*.c` | Bildtabelle und eingebettete LVGL-Bilddaten für `icon`, `rpm_warning` und `gps`. |
 | [src/ui/fonts.h](../src/ui/fonts.h), `src/ui/ui_font_*.c` | Eingebettete Fontdaten für die vier projektspezifischen Schriftgrößen. |
 | [src/ui/actions.h](../src/ui/actions.h), [styles.c](../src/ui/styles.c), [styles.h](../src/ui/styles.h), [structs.h](../src/ui/structs.h) | Generierte Gerüste ohne fachliche Inhalte. Die verwendeten Widget-Stile stehen direkt in `screens.c`. |
 | [mofa.eez-project](../mofa.eez-project) | EEZ-Studio-Quelldatei für Layout, Variablen, Fonts und Assets; Quelle für `src/ui`. |
 | [fonts](../fonts) | `aurebesh.ttf` und `digital.ttf`. Die konfigurierten EEZ-Fonts verwenden `aurebesh.ttf`; `digital.ttf` wird von dieser UI nicht genutzt. |
-| [test](../test) | Vier Compile-only-Tests (`gnss_epoch`, `ui_self_test`, `local_time`, `log_clock`): `static_assert` auf `constexpr`-Funktionen der Richtlinien-Header. Aufruf von Hand, zum Beispiel `g++ -std=c++17 -fsyntax-only test/log_clock/*.cpp`. `pio run` und der einzige Build-Env übersetzen `test/` nicht. `include` und `lib` enthalten nur die PlatformIO-README. |
+| [test](../test) | Fünf Compile-only-Tests (`gnss_epoch`, `ui_self_test`, `local_time`, `log_clock`, `rpm_filter`): `static_assert` auf `constexpr`-Funktionen der Richtlinien-Header. Aufruf von Hand, zum Beispiel `g++ -std=c++17 -fsyntax-only test/log_clock/*.cpp`. `pio run` und der einzige Build-Env übersetzen `test/` nicht. `include` und `lib` enthalten nur die PlatformIO-README. |
 | [platformio.ini](../platformio.ini) | Build-Umgebung, Bibliotheksvorgaben, LVGL-Buildflags, Monitorrate und Einbindung lokaler Zusatzkonfigurationen. |
 
 Die [Projekt-README](../README.md) beschreibt den Ablauf EEZ-Generierung vor PlatformIO-Kompilierung. Für Uploads gilt unabhängig davon die ausdrückliche Freigabepflicht aus `AGENTS.md`. `src/ui` ist generierter, versionierter EEZ-Code und wird nur über EEZ Studio geändert.
@@ -46,14 +46,14 @@ Die [Projekt-README](../README.md) beschreibt den Ablauf EEZ-Generierung vor Pla
 1. `Serial.begin(115200)`, `Wire.begin()` und I²C-Takt 400 kHz.
 2. Pin 3 als Drehzahleingang mit `INPUT_PULLDOWN`, Pin 2 als Ausgang, `rpmISR()` auf steigende Flanken.
 3. `sensors_DS.begin()` für den OneWire-Temperatursensor.
-4. `Display.begin()` und `TouchDetector.begin()`, danach `lv_init()` und `lv_tick_set_cb(millis)`.
+4. `Display.begin()` und `TouchDetector.begin()`, danach `lv_tick_set_cb(millis)` ohne separaten `lv_init()`-Aufruf.
 5. Anfangszustand der UI (`set_var_gps_online(false)`, `set_ui_velocity(-1)`, `set_ui_time_unavailable()`) und `ui_init()`.
 6. USB-Callbacks registrieren und einmal `msd.connect()` aufrufen.
 7. Threads starten: `displayThread`, `sensorThread`, `loggingThread`, `rpmSensorThread`, zuletzt `startGnss()`.
 
 Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNSS-Thread die Verbindung mit wachsender Pause (1 s, 2 s, 4 s, höchstens 8 s); Display, Drehzahl, Temperatur und Logging laufen weiter, und die UI zeigt „GPS: searching“ beziehungsweise (antwortet das Modul nicht am I²C) „GPS: no module“ in Rot. Schlägt der Start des GNSS-Threads selbst fehl, meldet die UI „GPS: thread error“.
 
-`Display.begin()` kommt aus der Bibliothek `Arduino_H7_Video`. Deren Symbole enthalten den LVGL-Flush-Callback (`lvgl_displayFlushing`), den Touch-Callback (`_lvglTouchCb`) und einen eigenen Tick-Thread. Ob der anschließende Aufruf von `lv_init()` in `setup()` dadurch überflüssig ist, wurde nicht geprüft.
+`Display.begin()` kommt aus der Bibliothek `Arduino_H7_Video`. Deren Symbole enthalten den LVGL-Flush-Callback (`lvgl_displayFlushing`), den Touch-Callback (`_lvglTouchCb`) und einen eigenen Tick-Thread. Im aktuellen `setup()` wird `lv_init()` nicht zusätzlich aufgerufen. Die Initialisierung erfolgt über `Display.begin()`; das Bibliotheksverhalten wurde hier nicht erneut auf Hardware geprüft.
 
 ### Threads und Stacks
 
@@ -209,7 +209,7 @@ Die folgenden Punkte sind aus dem Quelltext erkennbar. Soweit nichts anderes ste
 | GNSS-Neustart bei erster UTC-Zeit | Sobald der Empfänger erstmals gültige UTC meldet, nachdem schon Epochen veröffentlicht wurden, wird die Sitzung bewusst neu aufgebaut. Für etwa 2 bis 3 s fehlen dann Position und Geschwindigkeit, die UI zeigt „GPS: reconnecting“, die serielle Ausgabe „stream stale“. |
 | GNSS-Status | Ein nicht antwortendes Modul meldet „no module“ in Rot. `gpsOK` im Log und das Satellitensymbol folgen `connection == Receiving`, auch wenn noch keine Epoche veröffentlicht wurde. |
 | Logdateien | Spaltenname `Acc_ms-1` passt nicht zu dem Wert (horizontale Genauigkeit in Metern). Nicht verfügbare Werte (kein Fix, Sensorfehler) bleiben als leere Spalte. Die Kopfzeilen und `safeFileWrite()` werden nach dem Mountversuch ohne erneute Prüfung von `usbMountedFlag` ausgeführt. |
-| USB-Erfolgserkennung und Fehler | `mountUSB()` überschreibt den Rückgabewert von `fs.mount()` unmittelbar mit `errno` und bewertet danach diesen Wert. Schreibfehler werden nicht an den Logger zurückgegeben; dessen Pufferzähler werden nach dem Schreibversuch zurückgesetzt. Eine gesicherte Speicherung ist daraus nicht abzuleiten. |
+| USB-Erfolgserkennung und Fehler | `mountUSB()` bewertet den Rückgabewert von `fs.mount()` direkt (`mountCode == 0`) statt eines möglicherweise veralteten `errno`. Schreibfehler werden nicht an den Logger zurückgegeben; dessen Pufferzähler werden nach dem Schreibversuch zurückgesetzt. Eine gesicherte Speicherung ist daraus nicht abzuleiten. |
 | USB-Abziehen und Restpuffer | Zwischen Unmount im Callback und Schreiben im Logger ist keine gemeinsame Sperre sichtbar. Unvollständige Puffer werden beim Abziehen weder geschrieben noch zurückgesetzt. Beim nächsten als erfolgreich bewerteten Mount werden die Dateien geleert. Aussagen wie „verlustfrei“ oder „sicheres Entfernen“ sind trotz entsprechender Kommentare nicht nachgewiesen. |
 | Anzeige | Der Geschwindigkeitsfont enthält nur Ziffern; ohne Fix bleibt das Feld leer. Die angezeigte Drehzahl liegt bei konstanter Eingangsdrehzahl innerhalb von 0,6 des gefilterten Werts (Hysterese des Anzeigefilters). |
 | Temperatur | `tempOK` prüft `-55 < tC < 125`, wird aber sonst nirgends ausgewertet. Die Anzeige unterscheidet nur zwischen gültigem Wert und Werten `<= -120`. |
