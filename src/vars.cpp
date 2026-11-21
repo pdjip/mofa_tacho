@@ -91,7 +91,9 @@ void set_ui_gps_status(const GnssSnapshot &gps)
         text = "GPS: reconnecting";
         break;
     case GnssConnection::RetryWait:
-        text = "GPS: retrying";
+        // begin() failed: the module does not answer on I2C (unplugged or dead).
+        text = "GPS: no module";
+        level = Level::Error;
         break;
     case GnssConnection::ConfigError:
         text = "GPS: config error";

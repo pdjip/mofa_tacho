@@ -36,8 +36,10 @@ public:
         const float tau = timeConstantMs(error, zone);
         const float alpha = float(elapsed) / (tau + float(elapsed));
         filtered_ += alpha * error;
-        // A one-RPM Schmitt band prevents chatter at rounding half-integers.
-        if (filtered_ > float(shown_) + 1.0f || filtered_ < float(shown_) - 1.0f)
+        // A 0.6-RPM Schmitt band prevents chatter at rounding half-integers and
+        // keeps a steady value within 0.6 of the filtered one (a 1.0 band left it
+        // up to one RPM off).
+        if (filtered_ > float(shown_) + 0.6f || filtered_ < float(shown_) - 0.6f)
             shown_ = static_cast<int32_t>(filtered_ + 0.5f);
         return shown_;
     }

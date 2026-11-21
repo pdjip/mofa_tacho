@@ -44,7 +44,6 @@ using namespace std::chrono;
 #define RPM_HYST_ON 15000
 #define RPM_HYST_OFF 14500
 #define RPM_PULSE_PER_REV 2
-#define RPM_MIN_VALID 400
 #define TEMP_READ_HZ 1
 #define SENSOR_LOG_HZ 10
 #define USB_WRITE_BLOCK 20
@@ -143,7 +142,8 @@ void setup()
   // initialisieren des Displays
   Display.begin();
   TouchDetector.begin();
-  lv_init();
+  // Display.begin() already ran lv_init(). Its own tick thread advances time in
+  // 16 ms steps plus delay jitter; millis() is exact and takes precedence.
   lv_tick_set_cb(millis);
 
   set_var_gps_online(false);
@@ -344,9 +344,16 @@ void loggingTask()
       // SENSOR buffer @10Hz
       // Preserve the legacy ten-column schema; validity and epoch diagnostics
       // remain in the in-memory GNSS snapshot, not additional log columns.
-      String sline = String(timeBuf) + temperature + "\t" + String(gps.latitudeDeg, 7) + "\t" +
-          String(gps.longitudeDeg, 7) + "\t" + gps.altitudeM + "\t" + gps.speedKph + "\t" +
-          gps.courseDeg + "\t" + gps.horizontalAccuracyM + "\t" + gpsOK + "\t" + gpsFix3D + "\n";
+      // Unavailable values (no fix, sensor fault) are left empty instead of
+      // writing "nan" or the sensor's -127 error code into the data column.
+      String sline = String(timeBuf) + (temperature > -120.0f ? String(temperature) : String()) + "\t" +
+          (gps.positionValid ? String(gps.latitudeDeg, 7) : String()) + "\t" +
+          (gps.positionValid ? String(gps.longitudeDeg, 7) : String()) + "\t" +
+          (gps.altitudeValid ? String(gps.altitudeM) : String()) + "\t" +
+          (gps.positionValid ? String(gps.speedKph) : String()) + "\t" +
+          (gps.positionValid ? String(gps.courseDeg) : String()) + "\t" +
+          (gps.positionValid ? String(gps.horizontalAccuracyM) : String()) + "\t" +
+          gpsOK + "\t" + gpsFix3D + "\n";
       sensorBuffer[sensorBufCount++] = sline;
       if (sensorBufCount >= USB_WRITE_BLOCK)
       {
@@ -391,14 +398,16 @@ void displayTask()
     // restart the sweep while riding.
     if (selfTestRunning) {
       const uint32_t selfTestMs = millis() - selfTestStartMs;
-      selfTestRunning = ui_self_test::active(selfTestMs);
+      // A real over-rev (reset while riding) must not be hidden by the sweep.
+      selfTestRunning = ui_self_test::active(selfTestMs) && !rpmWarning;
       if (selfTestRunning)
         set_ui_self_test(ui_self_test::frame(selfTestMs));
     }
     sleep_ms = lv_task_handler();
     ui_tick();
     // Refresh live values and the clock even if LVGL currently has no timers.
-    rtos::ThisThread::sleep_for(milliseconds(sleep_ms < 20 ? sleep_ms : 20));
+    // lv_task_handler() returns 0 while a timer is due; never spin without a pause.
+    rtos::ThisThread::sleep_for(milliseconds(sleep_ms < 2 ? 2 : (sleep_ms < 20 ? sleep_ms : 20)));
   }
 }
 

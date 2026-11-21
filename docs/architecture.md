@@ -51,7 +51,7 @@ Die [Projekt-README](../README.md) beschreibt den Ablauf EEZ-Generierung vor Pla
 6. USB-Callbacks registrieren und einmal `msd.connect()` aufrufen.
 7. Threads starten: `displayThread`, `sensorThread`, `loggingThread`, `rpmSensorThread`, zuletzt `startGnss()`.
 
-Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNSS-Thread die Verbindung mit wachsender Pause (1 s, 2 s, 4 s, höchstens 8 s); Display, Drehzahl, Temperatur und Logging laufen weiter, und die UI zeigt „GPS: searching“ beziehungsweise „GPS: retrying“. Schlägt der Start des GNSS-Threads selbst fehl, meldet die UI „GPS: thread error“.
+Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNSS-Thread die Verbindung mit wachsender Pause (1 s, 2 s, 4 s, höchstens 8 s); Display, Drehzahl, Temperatur und Logging laufen weiter, und die UI zeigt „GPS: searching“ beziehungsweise (antwortet das Modul nicht am I²C) „GPS: no module“ in Rot. Schlägt der Start des GNSS-Threads selbst fehl, meldet die UI „GPS: thread error“.
 
 `Display.begin()` kommt aus der Bibliothek `Arduino_H7_Video`. Deren Symbole enthalten den LVGL-Flush-Callback (`lvgl_displayFlushing`), den Touch-Callback (`_lvglTouchCb`) und einen eigenen Tick-Thread. Ob der anschließende Aufruf von `lv_init()` in `setup()` dadurch überflüssig ist, wurde nicht geprüft.
 
@@ -65,7 +65,7 @@ Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNS
 | `rpmSensorTask()` | Liest das Wertepaar des Interrupts im kritischen Abschnitt, berechnet die Drehzahl (zwei Pulse pro Umdrehung), setzt sie nach 150 ms ohne Puls auf null. Warnschwelle mit Hysterese: ein ab 15000 min⁻¹, aus unter 14500 min⁻¹; sie schaltet Pin 2 und `curRpmWarning`. Veröffentlicht unter `dataMutex`. Pause 1 ms. | 200 / 4096 B |
 | `sensorTask()` | Nur Temperatur: einmal pro Sekunde `requestTemperatures()` und Sensor 0 lesen, Ergebnis unter `dataMutex` in `curTempC`. Pause 10 ms. | 232 / 4096 B |
 | `loggingTask()` | Sobald ein USB-Medium erkannt ist: mounten, Dateien leeren, Kopfzeilen schreiben, dann alle 100 ms je eine Zeile pro Datei, in Blöcken von 20 Zeilen angehängt. | 520 / 4096 B |
-| `displayTask()` | Besitzt alle UI-Zustände: liest Messwerte und GNSS-Stand, setzt die Modellvariablen, führt den Selbsttest aus, ruft `lv_task_handler()` und `ui_tick()` auf. Pause höchstens 20 ms. | **4608 / 8192 B** |
+| `displayTask()` | Besitzt alle UI-Zustände: liest Messwerte und GNSS-Stand, setzt die Modellvariablen, führt den Selbsttest aus, ruft `lv_task_handler()` und `ui_tick()` auf. Pause 2 bis 20 ms. | **4608 / 8192 B** |
 | `gnssThread` | Siehe unten. | 1176 / 4096 B (ohne Epochen gemessen) |
 | `main` (`setup()`/`loop()`) | | 1128 / 32768 B |
 | Bibliotheksthreads | USB-Host (zugeordnet über die Stackgröße 3072): 208 / 3072 B; LVGL-Tick: 112 / 4096 B; `USBevt` des Arduino-Cores: 136 / 256 B; RTX-Idle- und Timer-Thread. | |
@@ -83,7 +83,7 @@ Die genannten Raten sind aus Konstanten, Zeitvergleichen und Schlafpausen abgele
 3. Eine neue Sitzung veröffentlicht erst nach drei aufeinanderfolgenden 200-ms-Schritten. Danach schreibt jede neue Epoche den `GnssSnapshot` unter einem Mutex.
 4. Ohne neue Epoche für 1,5 s, bei dauerhaft falscher Rate oder zwei fehlgeschlagenen CFG-RATE-Prüfungen (alle 10 s) wird die Verbindung beendet und neu aufgebaut.
 5. Wird die erste gültige UTC-Zeit erkannt, nachdem schon Epochen veröffentlicht wurden, beginnt der Tracker neu; die Sitzung wird dafür beendet. Die UI zeigt kurz „GPS: reconnecting“.
-6. Die RTC wird einmal pro Start mit der ersten gültigen UTC-Zeit gesetzt (`set_time`, ganze Sekunden). Spätere Sitzungen verändern sie nicht.
+6. Die RTC wird einmal pro Start mit der ersten gültigen UTC-Zeit gesetzt (`set_time`, auf die nächste ganze Sekunde gerundet). Spätere Sitzungen verändern sie nicht.
 7. Alle 10 s schreibt der Thread eine Zeile `GNSS DIAG …` auf die serielle Schnittstelle.
 
 Der Snapshot enthält Verbindungszustand, Fix-Gültigkeit, Position, Höhe, Geschwindigkeit, Kurs, Genauigkeit, UTC-Zeit und `clockSynchronized`. `positionValid` verlangt `gnssFixOK`, keine ungültige Position und Fixtyp 2, 3 oder 4; `altitudeValid` zusätzlich Fixtyp ungleich 2.
@@ -97,7 +97,7 @@ Bei einem vom Code als erfolgreich bewerteten Mount werden **beide Dateien mit `
 - `/usb/DRZ.txt`: Zeitstempel und Drehzahl.
 - `/usb/SENSOR.txt`: Zeitstempel, Temperatur, Breite, Länge, Höhe, Geschwindigkeit, Kurs, horizontale Genauigkeit, `gpsOK` und `gpsFix3D`.
 
-Die Zeilen entstehen aus den jeweils zuletzt gespeicherten Messwerten; sie sind keine gemeinsame neue Messung zum Logzeitpunkt. Ohne gültigen Fix stehen Breite, Länge, Höhe, Geschwindigkeit, Kurs und Genauigkeit als Text `nan` in der Datei. Die beiden `String`-Puffer werden unabhängig nach jeweils 20 Zeilen mit `fopen(..., "a")`, `fputs()` und `fclose()` angehängt. Ein explizites Schreiben unvollständiger Puffer beim Abziehen ist nicht implementiert.
+Die Zeilen entstehen aus den jeweils zuletzt gespeicherten Messwerten; sie sind keine gemeinsame neue Messung zum Logzeitpunkt. Ohne gültigen Fix (und bei Temperaturfehler) bleiben die betroffenen Spalten leer, statt `nan` oder −127 zu enthalten. Die beiden `String`-Puffer werden unabhängig nach jeweils 20 Zeilen mit `fopen(..., "a")`, `fputs()` und `fclose()` angehängt. Ein explizites Schreiben unvollständiger Puffer beim Abziehen ist nicht implementiert.
 
 **Zeitstempel:** Die Spalte heißt `Time_UTC`. Sekunden und Millisekunden stammen aus einer einzigen Uhr (`log_clock.h`): Die erste gültige GNSS-Zeit, die der Logger sieht, verankert sie, danach läuft sie mit `millis()` weiter und kann dadurch nicht rückwärts springen. Vor der ersten gültigen GNSS-Zeit steht 1970 plus Betriebszeit als ausdrücklicher Platzhalter, kein vertrauenswürdiges UTC. Die Uhr wird nicht nachsynchronisiert und driftet mit dem Takt von `millis()`.
 
@@ -126,7 +126,6 @@ Die Angaben sind Versionsvorgaben aus [platformio.ini](../platformio.ini), keine
 | --- | --- | --- |
 | `arduino-libraries/Arduino_GigaDisplayTouch` | `^1.1.2` | Touchobjekt und Initialisierung in `main.cpp`. |
 | `lvgl/lvgl` | `^9.6.0` | GUI-Laufzeit, Widgets, Tick und Ereignisverarbeitung. |
-| `arkhipenko/TaskScheduler` | `^4.1.1` | Konfiguriert; keine Einbindung oder Nutzung in den Anwendungsquellen gefunden. |
 | `facchinm/Arduino_USBHostMbed5` | `^0.3.1` | USB-Massenspeicher und Erkennungs-/Entfernungs-Callbacks. |
 | `sparkfun/SparkFun u-blox GNSS Arduino Library` | `^2.2.29` | GNSS-Konfiguration und PVT-Abfrage im GNSS-Thread. |
 | `paulstoffregen/OneWire` | `^2.3.8` | OneWire-Bus an Pin 4. |
@@ -156,13 +155,13 @@ Die generierte [src/ui/vars.h](../src/ui/vars.h) deklariert C-Getter und -Setter
 | `set_ui_temperature()` / `temperature_text` | Eine Nachkommastelle, auch negativ. Bei Werten `<= -120` (ein fehlender Sensor liefert -127) steht `--.-`. |
 | `set_ui_time()` / `time_text` | `HH:MM:SS` in MEZ oder MESZ aus UTC-Sekunden (`local_time.h`), ohne feste Offset-Annahme. Solange keine GNSS-Zeit die RTC gesetzt hat, steht `...`. |
 | `gps_online` | Der Setter speichert `!value`; der Getter steuert das Hidden-Flag des Satellitensymbols. Ein Aufruf mit `true` macht das Symbol sichtbar. |
-| `gps_status_text`, `hide_gps_ok/busy/error` | Statuszeile mit Punkt: grün bei Fix („GPS: 3D fix“, „GPS: 2D fix“), gelb bei laufendem Aufbau („searching“, „starting“, „no fix“, „reconnecting“, „retrying“), rot bei Fehlern („config error“, „rate error“, „thread error“). Gesetzt von `set_ui_gps_status()`. |
+| `gps_status_text`, `hide_gps_ok/busy/error` | Statuszeile mit Punkt: grün bei Fix („GPS: 3D fix“, „GPS: 2D fix“), gelb bei laufendem Aufbau („searching“, „starting“, „no fix“, „reconnecting“), rot bei Fehlern („no module“, „config error“, „rate error“, „thread error“). Gesetzt von `set_ui_gps_status()`. |
 
 Die vier generierten Fonts (`DIGITAL_72`, `DIGITAL_128`, `DIGITA_32`, `DIGITAL_92`) basieren auf `fonts/aurebesh.ttf`. Nur `DIGITAL_72` enthält neben den Ziffern auch Punkt, Doppelpunkt und Bindestrich (Bereich `48-57,58,46,45`); sie bildet Uhr und Temperatur. Die anderen enthalten nur Ziffern. Zusätzlich nutzt `screens.c` Montserrat 14 und 20. Die Bilder `icon`, `rpm_warning` und `gps` liegen als eingebettete `RGB565A8`-Daten vor.
 
 ### Startdurchlauf („Selbsttest“)
 
-Wie bei Armaturen älterer Fahrzeuge fährt die Anzeige nach dem Einschalten alle Elemente durch ihren Bereich, damit tote Segmente, fehlende Zeichen oder defekte Widgets vor der ersten Messung auffallen. `ui_self_test.h` liefert dafür aus der verstrichenen Zeit einen Satz Werte, den `set_ui_self_test()` in die UI schreibt: 3 s lang Drehzahl 0 → 20000 → 0, Geschwindigkeit 0 → 199 → 0, Temperatur −40 → 120 → −40 °C (so ist das Minuszeichen gleich zu sehen), Warnsymbol zwischen 1 s und 2 s, Uhr `88:88:88` und nacheinander alle zehn GPS-Statustexte. Der Durchlauf läuft nur einmal nach dem Start des Displaythreads und überschreibt in dieser Zeit die Livewerte; auch nach einem unbeabsichtigten Reset zeigt er also zunächst die Testwerte.
+Wie bei Armaturen älterer Fahrzeuge fährt die Anzeige nach dem Einschalten alle Elemente durch ihren Bereich, damit tote Segmente, fehlende Zeichen oder defekte Widgets vor der ersten Messung auffallen. `ui_self_test.h` liefert dafür aus der verstrichenen Zeit einen Satz Werte, den `set_ui_self_test()` in die UI schreibt: 3 s lang Drehzahl 0 → 20000 → 0, Geschwindigkeit 0 → 199 → 0, Temperatur −40 → 120 → −40 °C (so ist das Minuszeichen gleich zu sehen), Warnsymbol zwischen 1 s und 2 s, Uhr `88:88:88` und nacheinander alle zehn GPS-Statustexte. Der Durchlauf läuft nur einmal nach dem Start des Displaythreads und überschreibt in dieser Zeit die Livewerte; er bricht sofort ab, sobald die Drehzahlwarnung echt anliegt, damit ein Reset während der Fahrt eine Überdrehzahl nicht verdeckt.
 
 ## 5. Abhängigkeiten und Datenfluss
 
@@ -205,16 +204,14 @@ Die folgenden Punkte sind aus dem Quelltext erkennbar. Soweit nichts anderes ste
 
 | Bereich | Beleg und Grenze der Aussage |
 | --- | --- |
-| GNSS-Zeit und RTC | Die RTC wird einmal pro Start mit ganzen UTC-Sekunden gesetzt; Nanosekunden und Verarbeitungszeit werden verworfen, sie kann deshalb bis etwa 1 s gegenüber UTC nachgehen und wird später nicht korrigiert. Anzeigeuhr (RTC) und Logzeit (eigene Verankerung) können sich um weniger als eine Sekunde unterscheiden. Die Zeitumrechnung ist für 2000 bis 2099 ausgelegt und hat als feste Zone Mitteleuropa. |
+| GNSS-Zeit und RTC | Die RTC wird einmal pro Start mit ganzen UTC-Sekunden gesetzt; Die Nanosekunden werden auf ganze Sekunden gerundet und die Verarbeitungszeit verworfen, sie kann deshalb um etwa eine halbe Sekunde abweichen und wird später nicht korrigiert. Anzeigeuhr (RTC) und Logzeit (eigene Verankerung) können sich um weniger als eine Sekunde unterscheiden. Die Zeitumrechnung ist für 2000 bis 2099 ausgelegt und hat als feste Zone Mitteleuropa. |
 | GNSS-Neustart bei erster UTC-Zeit | Sobald der Empfänger erstmals gültige UTC meldet, nachdem schon Epochen veröffentlicht wurden, wird die Sitzung bewusst neu aufgebaut. Für etwa 2 bis 3 s fehlen dann Position und Geschwindigkeit, die UI zeigt „GPS: reconnecting“, die serielle Ausgabe „stream stale“. |
-| GNSS-Status | Ein fehlender oder defekter Empfänger bleibt für die UI gelb („searching“/„retrying“) und wird nie rot, weil es kein Fehlerlimit für Verbindungsversuche gibt. `gpsOK` im Log und das Satellitensymbol folgen `connection == Receiving`, auch wenn noch keine Epoche veröffentlicht wurde. |
-| Logdateien | Spaltenname `Acc_ms-1` passt nicht zu dem Wert (horizontale Genauigkeit in Metern). Ohne Fix steht `nan` im Text. Die Kopfzeilen und `safeFileWrite()` werden nach dem Mountversuch ohne erneute Prüfung von `usbMountedFlag` ausgeführt. |
+| GNSS-Status | Ein nicht antwortendes Modul meldet „no module“ in Rot. `gpsOK` im Log und das Satellitensymbol folgen `connection == Receiving`, auch wenn noch keine Epoche veröffentlicht wurde. |
+| Logdateien | Spaltenname `Acc_ms-1` passt nicht zu dem Wert (horizontale Genauigkeit in Metern). Nicht verfügbare Werte (kein Fix, Sensorfehler) bleiben als leere Spalte. Die Kopfzeilen und `safeFileWrite()` werden nach dem Mountversuch ohne erneute Prüfung von `usbMountedFlag` ausgeführt. |
 | USB-Erfolgserkennung und Fehler | `mountUSB()` überschreibt den Rückgabewert von `fs.mount()` unmittelbar mit `errno` und bewertet danach diesen Wert. Schreibfehler werden nicht an den Logger zurückgegeben; dessen Pufferzähler werden nach dem Schreibversuch zurückgesetzt. Eine gesicherte Speicherung ist daraus nicht abzuleiten. |
 | USB-Abziehen und Restpuffer | Zwischen Unmount im Callback und Schreiben im Logger ist keine gemeinsame Sperre sichtbar. Unvollständige Puffer werden beim Abziehen weder geschrieben noch zurückgesetzt. Beim nächsten als erfolgreich bewerteten Mount werden die Dateien geleert. Aussagen wie „verlustfrei“ oder „sicheres Entfernen“ sind trotz entsprechender Kommentare nicht nachgewiesen. |
-| Anzeige | Der Geschwindigkeitsfont enthält nur Ziffern; ohne Fix bleibt das Feld leer. Die angezeigte Drehzahl kann bei konstanter Eingangsdrehzahl um 1 vom Sollwert abweichen (Hysterese des Anzeigefilters). Der Startdurchlauf überschreibt für 3 s auch eine echte Überdrehzahlwarnung, etwa nach einem Reset während der Fahrt. |
+| Anzeige | Der Geschwindigkeitsfont enthält nur Ziffern; ohne Fix bleibt das Feld leer. Die angezeigte Drehzahl liegt bei konstanter Eingangsdrehzahl innerhalb von 0,6 des gefilterten Werts (Hysterese des Anzeigefilters). |
 | Temperatur | `tempOK` prüft `-55 < tC < 125`, wird aber sonst nirgends ausgewertet. Die Anzeige unterscheidet nur zwischen gültigem Wert und Werten `<= -120`. |
-| Nicht verwendet | `RPM_MIN_VALID` ist definiert, aber ungenutzt; `TaskScheduler` ist eingetragen, aber ungenutzt. |
-| Display-Thread | Läuft in einer Schleife mit höchstens 20 ms Pause; liefert `lv_task_handler()` 0, schläft der Thread 0 ms, kehrt also ohne Pause zurück. Die Last dieses Falls wurde nicht untersucht. |
 | Tests | Die Compile-only-Tests laufen in keinem Build und in keiner automatischen Prüfung. Ein Eintrag in `platformio.ini` für einen `native`-Test existiert nicht; das Ausführen von `pio test` auf der Hardware wäre außerdem ein Upload und bräuchte die Freigabe aus `AGENTS.md`. |
 | Hardware | Konkrete Sensor-/GNSS-Modelle, elektrische Beschaltung und tatsächlich angeschlossene Geräte sind aus den Projektdateien nicht bestimmbar. |
 

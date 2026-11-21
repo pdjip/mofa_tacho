@@ -252,7 +252,8 @@ void gnssTask()
                             // connection. Reconnects cannot step the running clock
                             // backwards (or forwards); later drift correction is deferred.
                             if (current.timeValid && !current.clockSynchronized) {
-                                set_time(current.utcSeconds);
+                                // Round to the nearest second; truncation would always run behind.
+                                set_time(current.utcSeconds + (current.utcNanoseconds >= 500000000u ? 1 : 0));
                                 current.clockSynchronized = true;
                             }
                             retryMs = 1000;

@@ -15,5 +15,3 @@ static_assert(!frame(500).rpmWarning && frame(1500).rpmWarning && !frame(2500).r
 static_assert(frame(0).gps == GpsStep::Searching && frame(DURATION_MS - 1).gps == GpsStep::ThreadError, "all GPS states visited");
 static_assert(static_cast<uint8_t>(frame(DURATION_MS).gps) < GPS_STEPS, "GPS step in range");
 static_assert(active(DURATION_MS - 1) && !active(DURATION_MS), "three second window");
-
-int main() { return 0; }
