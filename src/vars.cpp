@@ -20,8 +20,8 @@ bool hide_gps_busy = false;
 bool hide_gps_error = true;
 char usb_status_text[24] = "USB: no stick";
 bool hide_usb_ok = true;
-bool hide_usb_busy = false;
-bool hide_usb_error = true;
+bool hide_usb_busy = true;
+bool hide_usb_error = false;
 
 extern "C" void set_var_motor_rpm(const int32_t value)
 {
@@ -125,7 +125,7 @@ void set_ui_usb_status(const UsbState state)
     bool ok = false, error = false;
     switch (state)
     {
-    case UsbState::NoStick:  text = "USB: no stick"; break; // Not logging: amber.
+    case UsbState::NoStick:  text = "USB: no stick"; error = true; break; // Not logging: red.
     case UsbState::Mounting: text = "USB: mounting"; break;
     case UsbState::Logging:  text = "USB: logging"; ok = true; break;
     case UsbState::Error:    text = "USB: error"; error = true; break;
