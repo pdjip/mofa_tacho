@@ -20,6 +20,8 @@ constexpr uint32_t STACK_BYTES = 4096;
 // The device and all library state are accessed exclusively by gnssTask().
 SFE_UBLOX_GNSS gnss;
 rtos::Mutex snapshotMutex;
+rtos::Mutex fifoMutex;
+gnss_log::Fifo logFifo; // Boot lifetime: never reset on GNSS reconnect.
 GnssSnapshot published;
 alignas(8) unsigned char gnssStack[STACK_BYTES];
 rtos::Thread gnssThread(osPriorityNormal, STACK_BYTES, gnssStack, "gnss");
@@ -258,6 +260,28 @@ void gnssTask()
                             }
                             retryMs = 1000;
                             publish(current);
+                            GnssLogRecord record;
+                            record.utcMs = int64_t(current.utcSeconds) * 1000 + current.utcNanoseconds / 1000000;
+                            record.sessionId = current.sessionId;
+                            record.sampleId = current.sampleId;
+                            record.iTowMs = current.iTowMs;
+                            record.receivedMs = current.receivedMs;
+                            record.epochDeltaMs = current.epochDeltaMs;
+                            record.latitude = p.lat;
+                            record.longitude = p.lon;
+                            record.altitudeMslMm = p.hMSL;
+                            record.speedMmS = p.gSpeed;
+                            record.courseE5 = p.headMot;
+                            record.horizontalAccuracyMm = p.hAcc;
+                            record.timeValid = current.timeValid;
+                            record.positionValid = current.positionValid;
+                            record.altitudeValid = current.altitudeValid;
+                            record.fixType = current.fixType;
+                            // No snapshot mutex is held, and no I/O/formatting
+                            // occurs under the FIFO mutex.
+                            fifoMutex.lock();
+                            logFifo.push(record);
+                            fifoMutex.unlock();
                             // Count only accepted, published new iTOW epochs.
                             // Position/time validity is independent of packet freshness.
                             ++diagnostics.epochs;
@@ -314,4 +338,28 @@ GnssSnapshot readGnssSnapshot()
         invalidate(copy);
     }
     return copy;
+}
+
+size_t reserveGnssLog(GnssLogRecord *out, size_t limit, uint32_t now)
+{
+    fifoMutex.lock();
+    const size_t count = logFifo.reserve(out, limit, now);
+    fifoMutex.unlock();
+    return count;
+}
+
+bool completeGnssLog(uint64_t firstSequence, size_t count, bool success)
+{
+    fifoMutex.lock();
+    const bool valid = logFifo.complete(firstSequence, count, success);
+    fifoMutex.unlock();
+    return valid;
+}
+
+GnssLogStats readGnssLogStats()
+{
+    fifoMutex.lock();
+    const GnssLogStats stats = logFifo.stats();
+    fifoMutex.unlock();
+    return stats;
 }
