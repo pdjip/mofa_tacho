@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <time.h>
+#include "gnss_log_fifo.h"
 
 enum class GnssConnection : uint8_t {
     Searching, Configuring, Receiving, Stale, RetryWait, ConfigError, RateError, ThreadError
@@ -34,5 +35,11 @@ struct GnssSnapshot {
 
 bool startGnss();
 GnssSnapshot readGnssSnapshot();
+
+// loggingTask is the sole consumer. Complete exactly the reserved block once;
+// false success marks the whole attempted block uncertain, with no replay.
+size_t reserveGnssLog(GnssLogRecord *out, size_t limit, uint32_t now);
+bool completeGnssLog(uint64_t firstSequence, size_t count, bool success);
+GnssLogStats readGnssLogStats();
 
 #endif

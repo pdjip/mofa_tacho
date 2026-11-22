@@ -4,10 +4,10 @@
 
 Diese Übersicht beschreibt den Quelltext im Repository, keine geplante Architektur. Grundlage sind die Projektdateien, insbesondere [AGENTS.md](../AGENTS.md), [platformio.ini](../platformio.ini), [src/main.cpp](../src/main.cpp), [src/gnss_service.cpp](../src/gnss_service.cpp), [src/vars.cpp](../src/vars.cpp) und [mofa.eez-project](../mofa.eez-project) einschließlich der generierten Dateien unter `src/ui`.
 
-Prüfstand dieser Fassung: **Quellstand `develop`, Commit `0e174bb`**. Für diese Dokumentationskorrektur wurden keine Builds oder Tests ausgeführt.
+Pruefstand dieser Fassung: **GNSS-FIFO Variante A, gezielte CASE-Nacharbeit B1 auf Basis `2673b455`**. Aktuelle RAM-/Flashwerte und Pruefergebnisse stehen im [P3-Pruefbericht](../test/gnss_logger/README.md). Fruehere Messungen unten gelten nicht als Nachweis fuer diese Aenderung.
 
 - **Früherer Buildbefund (für `0e174bb` nicht erneut geprüft):** `pio run -e giga_r1_m7` läuft fehlerfrei durch (Flash 60,6 % von 786 432 Byte, RAM 24,6 %).
-- **Richtlinientests:** Im aktuellen Quellstand liegen fünf Compile-only-Testdateien unter `test/`. Sie werden vom PlatformIO-Firmwarebuild nicht ausgeführt; ein erneutes Testergebnis liegt für diese Prüfung nicht vor.
+- **Pruefungen:** Sieben C++-Compile-only-Suiten (`gnss_epoch`, `local_time`, `log_clock`, `rpm_filter`, `ui_self_test`, `gnss_log_fifo`, `gnss_logger`) pruefen `constexpr`-Richtlinien mit `static_assert`. Dazu kommen acht Python-Quellvertragspruefungen in `test/gnss_logger/test_integration.py`. `python test/gnss_logger/run_tests.py` fuehrt beide Gruppen aus; der PlatformIO-Firmwarebuild fuehrt sie nicht aus. Ergebnisse und Grenzen sind im P3-Pruefbericht dokumentiert.
 - **Frühere Hardwaremessung (für `0e174bb` nicht wiederholt):** Gemessen wurden nur die Stackspitzen der Threads auf dem Board (Abschnitt 2). Während dieser Messung lieferte der GNSS-Empfänger keine Epochen. Alle anderen Aussagen über das Laufzeitverhalten sind aus dem Code abgeleitet; unklare oder nicht nachgewiesene Eigenschaften sind ausdrücklich gekennzeichnet.
 
 Die Zielhardware ist laut `AGENTS.md` der Arduino GIGA R1 M7 mit STM32H747 und Cortex-M7. Das Framework ist Arduino Mbed; `platformio.ini` verwendet die Plattform `ststm32`, das Board `giga_r1_m7`, `framework = arduino` und die Build-Umgebung `giga_r1_m7`. Eine Firmware für den zweiten Prozessorkern oder eine Kommunikation mit ihm ist nicht enthalten.
@@ -18,6 +18,7 @@ Die Zielhardware ist laut `AGENTS.md` der Arduino GIGA R1 M7 mit STM32H747 und C
 | --- | --- |
 | [src/main.cpp](../src/main.cpp) | Hardwareobjekte, Konfiguration, Arduino-Einstiegspunkte, Drehzahlinterrupt, die RTOS-Threads für Drehzahl, Temperatur, Logging und Display sowie USB-Mount und Dateizugriffe. Der GNSS-Thread wird aus `setup()` gestartet, liegt aber in `gnss_service.cpp`. |
 | [src/gnss_service.h](../src/gnss_service.h), [gnss_service.cpp](../src/gnss_service.cpp) | Eigener GNSS-Thread (`gnssThread`, statischer 4-KiB-Stack). Konfiguriert den Empfänger, liest PVT-Epochen, prüft Reihenfolge und Rate, setzt einmal pro Start die RTC und veröffentlicht den jeweils letzten Stand als `GnssSnapshot`. `readGnssSnapshot()` liefert eine Kopie und markiert Daten nach 1,5 s ohne neue Epoche als veraltet. |
+| [src/gnss_log_fifo.h](../src/gnss_log_fifo.h) | Hardwareunabhaengiger statischer GNSS-Ring, 64-Byte-Logdatensatz, Statistik/Reservierung und injizierbare gepruefte Dateioperationen; constexpr-Policy erlaubt Compile-time-Fehlerinjektionstests ohne Hostcompiler. |
 | [src/gnss_epoch.h](../src/gnss_epoch.h) | Reine Richtlinienlogik ohne Hardwarebezug: `EpochTracker` (Reihenfolge, Duplikate, Zeitsprünge, neue Basis nach drei regelmäßigen Schritten eines abgelehnten Stroms) und `RateMonitor` (Abstand der Epochen gegen 200 ms). |
 | [src/rpm_display_filter.h](../src/rpm_display_filter.h) | Glättung der angezeigten Drehzahl mit Totzone und Hysterese. Wirkt nur auf die Anzeige; Rohdrehzahl, Logging und Warnausgang nutzen sie nicht. |
 | [src/ui_self_test.h](../src/ui_self_test.h) | Startdurchlauf von 3 s: schiebt Drehzahl, Geschwindigkeit, Temperatur, Warnsymbol, Uhr und alle GPS-Statustexte durch ihren Wertebereich. |
@@ -32,7 +33,7 @@ Die Zielhardware ist laut `AGENTS.md` der Arduino GIGA R1 M7 mit STM32H747 und C
 | [src/ui/actions.h](../src/ui/actions.h), [styles.c](../src/ui/styles.c), [styles.h](../src/ui/styles.h), [structs.h](../src/ui/structs.h) | Generierte Gerüste ohne fachliche Inhalte. Die verwendeten Widget-Stile stehen direkt in `screens.c`. |
 | [mofa.eez-project](../mofa.eez-project) | EEZ-Studio-Quelldatei für Layout, Variablen, Fonts und Assets; Quelle für `src/ui`. |
 | [fonts](../fonts) | `aurebesh.ttf` und `digital.ttf`. Die konfigurierten EEZ-Fonts verwenden `aurebesh.ttf`; `digital.ttf` wird von dieser UI nicht genutzt. |
-| [test](../test) | Fünf Compile-only-Tests (`gnss_epoch`, `ui_self_test`, `local_time`, `log_clock`, `rpm_filter`): `static_assert` auf `constexpr`-Funktionen der Richtlinien-Header. Aufruf von Hand, zum Beispiel `g++ -std=c++17 -fsyntax-only test/log_clock/*.cpp`. `pio run` und der einzige Build-Env übersetzen `test/` nicht. `include` und `lib` enthalten nur die PlatformIO-README. |
+| [test](../test) | Sieben C++-Compile-only-Suiten (`gnss_epoch`, `local_time`, `log_clock`, `rpm_filter`, `ui_self_test`, `gnss_log_fifo`, `gnss_logger`) und acht statische Python-Quellvertragspruefungen. Gemeinsamer Runner: `python test/gnss_logger/run_tests.py`; er kompiliert die `static_assert`-Suiten mit dem vorhandenen ARM-Compiler und startet `test_integration.py`. Keine Laufzeitsimulation von RTOS, USB oder RTC. `pio run` uebersetzt `test/` nicht. `include` und `lib` enthalten nur die PlatformIO-README. |
 | [platformio.ini](../platformio.ini) | Build-Umgebung, Bibliotheksvorgaben, LVGL-Buildflags, Monitorrate und Einbindung lokaler Zusatzkonfigurationen. |
 
 Die [Projekt-README](../README.md) beschreibt den Ablauf EEZ-Generierung vor PlatformIO-Kompilierung. Für Uploads gilt unabhängig davon die ausdrückliche Freigabepflicht aus `AGENTS.md`. `src/ui` ist generierter, versionierter EEZ-Code und wird nur über EEZ Studio geändert.
@@ -48,7 +49,7 @@ Die [Projekt-README](../README.md) beschreibt den Ablauf EEZ-Generierung vor Pla
 3. `sensors_DS.begin()` für den OneWire-Temperatursensor.
 4. `Display.begin()` und `TouchDetector.begin()`, danach `lv_tick_set_cb(millis)` ohne separaten `lv_init()`-Aufruf.
 5. Anfangszustand der UI (`set_var_gps_online(false)`, `set_ui_velocity(-1)`, `set_ui_time_unavailable()`) und `ui_init()`.
-6. USB-Callbacks registrieren und einmal `msd.connect()` aufrufen.
+6. USB-Callbacks registrieren; connect(), Mount, Unmount und Dateizugriffe erfolgen ausschliesslich im Loggerthread.
 7. Threads starten: `displayThread`, `sensorThread`, `loggingThread`, `rpmSensorThread`, zuletzt `startGnss()`.
 
 Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNSS-Thread die Verbindung mit wachsender Pause (1 s, 2 s, 4 s, höchstens 8 s); Display, Drehzahl, Temperatur und Logging laufen weiter, und die UI zeigt „GPS: searching“ beziehungsweise (antwortet das Modul nicht am I²C) „GPS: no module“ in Rot. Schlägt der Start des GNSS-Threads selbst fehl, meldet die UI „GPS: thread error“.
@@ -64,7 +65,7 @@ Der GNSS-Empfänger blockiert den Start nicht mehr. Fehlt er, wiederholt der GNS
 | `rpmISR()` | Übernimmt `micros()` und den Abstand zum letzten Puls nur, wenn er größer als 1000 µs ist. Zwei `volatile uint32_t`-Werte. | Interruptstack: 472 / 1024 B |
 | `rpmSensorTask()` | Liest das Wertepaar des Interrupts im kritischen Abschnitt, berechnet die Drehzahl (zwei Pulse pro Umdrehung), setzt sie nach 150 ms ohne Puls auf null. Warnschwelle mit Hysterese: ein ab 15000 min⁻¹, aus unter 14500 min⁻¹; sie schaltet Pin 2 und `curRpmWarning`. Veröffentlicht unter `dataMutex`. Pause 1 ms. | 200 / 4096 B |
 | `sensorTask()` | Nur Temperatur: einmal pro Sekunde `requestTemperatures()` und Sensor 0 lesen, Ergebnis unter `dataMutex` in `curTempC`. Pause 10 ms. | 232 / 4096 B |
-| `loggingTask()` | Sobald ein USB-Medium erkannt ist: mounten, Dateien leeren, Kopfzeilen schreiben, dann alle 100 ms je eine Zeile pro Datei, in Blöcken von 20 Zeilen angehängt. | 520 / 4096 B |
+| `loggingTask()` | Alleiniger USB-/Dateibesitzer; Legacy-Sampling nominal 10 Hz, gepruefte Bloecke mit 1-s-Teilblockfrist, separate GNSS-Segmente mit bis zu 20 Epochen je Runde und periodischer Statistik. Kein Leeren vorhandener Dateien. | 4096 B reserviert; historische Spitze 520 B gilt nicht fuer FIFO-Stand. |
 | `displayTask()` | Besitzt alle UI-Zustände: liest Messwerte und GNSS-Stand, setzt die Modellvariablen, führt den Selbsttest aus, ruft `lv_task_handler()` und `ui_tick()` auf. Pause 2 bis 20 ms. | **4608 / 8192 B** |
 | `gnssThread` | Siehe unten. | 1176 / 4096 B (ohne Epochen gemessen) |
 | `main` (`setup()`/`loop()`) | | 1128 / 32768 B |
@@ -80,7 +81,7 @@ Die genannten Raten sind aus Konstanten, Zeitvergleichen und Schlafpausen abgele
 
 1. `gnss.begin(Wire, 0x42, 250 ms)`, danach Konfiguration: UBX auf I²C, Messperiode 200 ms, Navigationsrate 1, anschließend eine frische CFG-RATE-Abfrage; nur bei 200 ms und Rate 1 geht es weiter, dann Auto-PVT an. `setNavigationFrequency(1)` wird bewusst nicht verwendet, weil es 200 ms auf 1000 ms überschriebe.
 2. Alle 10 ms wird mit `getPVT(0)` auf eine neue Epoche geprüft. `EpochTracker` ordnet sie ein (Basis, neu, Duplikat, alt, ungültig); `RateMonitor` prüft den Abstand der Epochen.
-3. Eine neue Sitzung veröffentlicht erst nach drei aufeinanderfolgenden 200-ms-Schritten. Danach schreibt jede neue Epoche den `GnssSnapshot` unter einem Mutex.
+3. Eine neue Sitzung veroeffentlicht erst nach drei aufeinanderfolgenden 200-ms-Schritten. Jede danach akzeptierte Epoche aktualisiert den Snapshot und wird genau einmal im separaten FIFO eingereiht oder als Ueberlauf gezaehlt, auch ohne gueltige Position/UTC. Andere Zustandsveroeffentlichungen werden nicht eingereiht.
 4. Ohne neue Epoche für 1,5 s, bei dauerhaft falscher Rate oder zwei fehlgeschlagenen CFG-RATE-Prüfungen (alle 10 s) wird die Verbindung beendet und neu aufgebaut.
 5. Wird die erste gültige UTC-Zeit erkannt, nachdem schon Epochen veröffentlicht wurden, beginnt der Tracker neu; die Sitzung wird dafür beendet. Die UI zeigt kurz „GPS: reconnecting“.
 6. Die RTC wird einmal pro Start mit der ersten gültigen UTC-Zeit gesetzt (`set_time`, auf die nächste ganze Sekunde gerundet). Spätere Sitzungen verändern sie nicht.
@@ -90,16 +91,50 @@ Der Snapshot enthält Verbindungszustand, Fix-Gültigkeit, Position, Höhe, Gesc
 
 ### USB-Dateien und Messdaten
 
-`USBHostMSD msd` und `mbed::FATFileSystem fs("usb")` stellen den Massenspeicherzugriff bereit. `usbAttachHandler()` setzt den Erkennungszustand; `usbDetachHandler()` löscht die Zustandsflags und ruft `unmountUSB()` auf. `mountUSB()` versucht die Verbindung und das Mounten bis zu fünfmal.
+`USBHostMSD msd` und `mbed::FATFileSystem fs("usb")` stellen den Massenspeicherzugriff bereit. Nur `loggingTask()` ruft `connect()`, Mount, Unmount und Dateioperationen auf. Callbacks setzen ausschliesslich lockfreie atomare Zustaende; eine atomare Detach-Generation erkennt auch ein Entfernen mit raschem Wiederanschluss zwischen zwei Loggerrunden. Kein Unmount laeuft gleichzeitig mit einer Logger-Dateioperation. Ein fehlgeschlagenes Unmount blockiert erneute Mounts und Writes bis zum erfolgreichen Unmount. Der Logger unternimmt hoechstens einen Mountversuch pro Sekunde, ohne enge Wiederholungsschleife.
 
-Bei einem vom Code als erfolgreich bewerteten Mount werden **beide Dateien mit `fopen(..., "w+")` geleert**. `loggingTask()` schreibt anschließend tabulatorgetrennte Kopfzeilen:
+Die bestehenden Dateien werden beim Mount **nicht mehr geleert**. Nur eine neue oder leere Datei erhaelt ihre bisherige Kopfzeile; existierende Daten bleiben erhalten:
 
-- `/usb/DRZ.txt`: Zeitstempel und Drehzahl.
-- `/usb/SENSOR.txt`: Zeitstempel, Temperatur, Breite, Länge, Höhe, Geschwindigkeit, Kurs, horizontale Genauigkeit, `gpsOK` und `gpsFix3D`.
+- `/usb/DRZ.txt`: `Time_UTC`, `RPM_Umin-1`.
+- `/usb/SENSOR.txt`: unveraendert zehn Spalten fuer Zeit, Temperatur, Breite, Laenge, Hoehe, Geschwindigkeit, Kurs, horizontale Genauigkeit, `gpsOK` und `gpsFix3D`.
 
-Die Zeilen entstehen aus den jeweils zuletzt gespeicherten Messwerten; sie sind keine gemeinsame neue Messung zum Logzeitpunkt. Ohne gültigen Fix (und bei Temperaturfehler) bleiben die betroffenen Spalten leer, statt `nan` oder −127 zu enthalten. Die beiden `String`-Puffer werden unabhängig nach jeweils 20 Zeilen mit `fopen(..., "a")`, `fputs()` und `fclose()` angehängt. Ein explizites Schreiben unvollständiger Puffer beim Abziehen ist nicht implementiert.
+Diese Legacy-Zeilen bleiben aktuelle Snapshots, nominal 10 Hz, mit unveraenderter RPM-/Temperatursemantik und leeren ungueltigen Messwerten. Sie werden spaetestens nach einer Sekunde oder bei 20 Eintraegen geschrieben (sofern das Medium verfuegbar ist und Dateiaufrufe zurueckkehren). Nicht versuchte Restpuffer bleiben bei Ausfall erhalten; volle Puffer verhindern weiteres Legacy-Sampling, es gibt keine nachtraegliche Rekonstruktion. Ein versuchter fehlerhafter Legacy-Block wird vollstaendig in `legacyUncertain` gezaehlt und nicht wiederholt. Fehler in einer Legacy-Datei verhindern weitere Dateiversuche derselben Runde. Eine unbegrenzte, verlustfreie Legacy-Pufferung ist damit nicht zugesagt.
 
-**Zeitstempel:** Die Spalte heißt `Time_UTC`. Sekunden und Millisekunden stammen aus einer einzigen Uhr (`log_clock.h`): Die erste gültige GNSS-Zeit, die der Logger sieht, verankert sie, danach läuft sie mit `millis()` weiter und kann dadurch nicht rückwärts springen. Vor der ersten gültigen GNSS-Zeit steht 1970 plus Betriebszeit als ausdrücklicher Platzhalter, kein vertrauenswürdiges UTC. Die Uhr wird nicht nachsynchronisiert und driftet mit dem Takt von `millis()`.
+#### Separates GNSS-Epochenprotokoll (Variante A)
+
+Unmittelbar nach der bisherigen Akzeptanz/Veroeffentlichung kopiert `gnssTask()` einen `GnssLogRecord` mit urspruenglichen UBX-Ganzzahleinheiten. Er enthaelt Sequenz (`uint64_t`), bereits normalisierte UTC-Millisekunden (`int64_t`), Sitzung, Sample, iTOW, Host-Empfangszeit, Epochendelta, Position, Hoehe, Geschwindigkeit, Kurs, horizontale Genauigkeit und Gueltigkeitsflags/Fixtyp. `static_assert` verlangt genau 64 Byte. Ungueltige UTC bleibt ungueltig; `receivedMs` ersetzt keine Messzeit. Insbesondere wird eine alte Epoche niemals an die aktuelle Legacy-Hostuhr zurueckgefuettert.
+
+Der eigene FIFO-Mutex schuetzt nur Kopien, Indizes und Statistik; Snapshot- und FIFO-Mutex werden nie gleichzeitig gehalten. Einreihung fuehrt keine Formatierung, serielle Ausgabe oder Dateizugriffe aus. Der Ring hat genau **320 nutzbare Plaetze**, haelt bei vollem Ring bereits gespeicherte Daten und verwirft den neuen Datensatz (**Drop-newest**). Die bootweite Akzeptanzsequenz steigt auch bei diesem Verlust. GNSS-Reconnects loeschen weder FIFO noch Zaehler; Sitzung/Sample und Sequenz unterscheiden historische Epochen.
+
+Der einzige Konsument reserviert hoechstens 20 Eintraege als statische Arbeitskopie. Diese bleiben bis zur Bestaetigung im FIFO enthalten und vor Ueberlauf geschuetzt. Ein voller Block ist sofort faellig, ein Teilblock nach einer Sekunde ab dem `receivedMs` des aeltesten Eintrags. Der Logger nimmt unmittelbar vor der Reservierung nach den Dateioperationen eine frische `millis()`-Zeit auf. Die modulare Alterspruefung weist zukunftsliegende Empfangszeiten zurueck, auch wenn der Produzent zwischen Zeitaufnahme und FIFO-Sperre einreiht. Sie beruecksichtigt einen `millis()`-Umlauf fuer eindeutige Zeitabstaende unter einem Halbzyklus (2^31 ms, etwa 24,9 Tage); groessere Abstaende lassen sich ohne zusaetzlichen Zeitanker nicht sicher von zukuenftigen Werten unterscheiden und geben keinen Teilblock frei. Die Frist setzt Rueckkehr der Dateisystemaufrufe voraus. Je 100-ms-Runde wird hoechstens ein GNSS-Block geschrieben; rechnerisch bis zu 200 Epochen/s vor I/O-/Schedulingkosten, also mehr als der 5-Hz-Zulauf. Legacy-Arbeit erhaelt jede Runde Vorrang. Treiberaufrufe koennen das zeitliche Budget trotzdem ueberschreiten.
+
+Neue Dateien heissen `/usb/GN000000.tsv` bis `/usb/GN009999.tsv`. `O_CREAT | O_EXCL` reserviert jeden Namen exklusiv; bestehende Dateien werden nicht ueberschrieben. Die Suche prueft maximal 32 Kandidaten je Runde und insgesamt 10000 Nummern pro Boot. Namenskollisionen (`EEXIST`), eine noch laufende Suche und die Erschoepfung des Namensraums sind GNSS-spezifische Zustaende: Sie setzen keinen gemeinsamen USB-/Loggerfehler und unterbrechen weder RPM- noch Temperaturlogging. Ohne Segment wird kein FIFO-Block reserviert oder bestaetigt; der FIFO bleibt bis zum regulaer bilanzierten Drop-newest-Ueberlauf erhalten. Nach 10000 Kandidaten gibt es in diesem Boot keine weiteren Anlageversuche; die Erschoepfung wird einmal seriell gemeldet.
+
+Auch `IoError` bei der GNSS-Segmentanlage beweist fuer sich keinen gemeinsamen Dateisystemausfall. Solange Attached-Flag und Detach-Generation unveraendert sind, bleiben Legacy-Sampling und die faelligen, vollstaendig geprueften Legacy-Schreibversuche aktiv. Fehler beim GNSS-Statistik- oder Blockschreiben verwerfen nur das aktive Segment; ein versuchter GNSS-Block wird weiterhin einmalig als unsicher bilanziert. Der naechste begrenzte Anlageversuch verwendet den naechsten Namen, ohne Replay oder Anhaengen hinter eine moeglicherweise unvollstaendige Zeile. GNSS-Fehler werden seriell gemeldet. Ein Mediumwechsel, fehlgeschlagener Legacy-Header/-Schreibzugriff oder verletzte FIFO-Abschlussinvariante loest weiterhin den konservativen gemeinsamen Fehlerpfad mit Unmount und erneut geprueftem Mount aus. Ein gemeinsamer Dateisystemausfall ohne Detach-Ereignis wird somit spaetestens am naechsten faelligen Legacy-Dateizugriff erkannt, sofern die Treiberaufrufe zurueckkehren; GNSS-Anlagefehler allein verhindern diesen Nachweis nicht mehr. Fehlgeschlagenes Mount beziehungsweise noch nicht abgeschlossenes Unmount sperrt weiterhin alle Dateizugriffe. Jeder Wiederanschluss erzeugt ein neues GNSS-Segment.
+
+Die versionierte Kopfzeile lautet `# GNSS_LOG_V1`. Die 17 tabulatorgetrennten Spalten sind:
+
+`sequence, sessionId, sampleId, iTOW_ms, receivedMs, epochDeltaMs, UTC_ms, timeValid, positionValid, altitudeValid, fixType, lat_e7, lon_e7, hMSL_mm, gSpeed_mm_s, headMot_e5, hAcc_mm`.
+
+Ungueltige UTC-, Positions- und Hoehenwerte bleiben entsprechend ihren Flags leer. Kommentarzeilen `# STATS` erscheinen beim Oeffnen eines Segments und mindestens einmal pro Loggersekunde unabhaengig von weiteren Epochen. Sie enthalten bootweite `accepted`, `written`, `queued`, `highWater`, `overflow`, `uncertain` und separat `legacyUncertain`. `gnssSegmentNext` zeigt den Fortschritt der begrenzten Namenssuche, `gnssSegmentExhausted=1` die Erschoepfung ohne aktives Segment; dieser GNSS-Zustand setzt nicht das gemeinsame USB-Fehlerflag. Die Statistik wird auch ohne Medium seriell ausgegeben; beim Wiederanschluss wird die aktuelle Bilanz im neuen Segment sichtbar. Dadurch bleiben auch Verluste ohne einen nachfolgenden GNSS-Datensatz erkennbar, solange die Firmware weiterlaeuft.
+
+Erfolg erfordert Oeffnen, vollstaendige `fwrite`-Operationen, `fflush`, `fclose` und eine unveraenderte Detach-Generation bei weiterhin erkanntem Medium. Auch nach Schreib-/Flushfehler wird geschlossen. Ein versuchter fehlerhafter GNSS-Block wird **vollstaendig als unsicher** gezaehlt und aus dem Ring genommen, ohne automatisches Replay; unversuchte Eintraege bleiben erhalten. Die einzelne Unsicherheitsgruppe ist auf 20 Epochen begrenzt. Das gilt konservativ auch bei Oeffnungsfehler, obwohl dann keine Nutzdaten geschrieben wurden. Die Anzahl tatsaechlich gespeicherter Zeilen eines Fehlerblocks ist unbekannt. Erfolgreiche Dateisystemaufrufe beweisen keinen physischen Flash-Commit und bieten keine Exactly-once-Garantie.
+
+Die unter dem FIFO-Mutex konsistente Bilanz lautet:
+
+`accepted = queued (einschliesslich reservierter Eintraege) + written + overflow + uncertain`.
+
+#### Speicherbudget und verbleibende Verifikation
+
+- Ringdaten: **320 x 64 = 20480 Byte** statisch; zusaetzlich Statistik, zwei Indizes und FIFO-Mutex.
+- Logger-Arbeitskopie: **20 x 64 = 1280 Byte** statisch, Formatpuffer **384 Byte** statisch. Zusammen sind das **22144 Byte** fuer diese drei Arrays, zuzueglich Verwaltungs-/Atomikzustand, Pfadpuffer und Mutex. Die fruehere Header-`String`-Arrayreserve entfaellt.
+- Der Ring und die Arbeitskopie liegen nicht auf dem bestehenden 4-KiB-Loggerstack. Kleine Formatierhilfen und printf-/Dateisystemaufrufe benoetigen weiterhin Stack. Die alten Stackmessungen ohne GNSS-Epochen sind kein aktueller Reservenachweis. Eine Laufzeit-Wasserzeichenpruefung unter GNSS/USB-Last bleibt offen.
+- B1-P3-Build vom 22. November 2026: RAM **150656 Byte** (28,8 %), Flash **482112 Byte** (61,3 %), BIN **484048 Byte**; RAM unveraendert, Flash +168 Byte gegen den vorigen P3-Stand. Sieben C++-Suiten mit 90 Assertions und acht Python-Quellvertraege erfolgreich; Einzelheiten und Grenzen im P3-Pruefbericht. Heap-/FAT-/USB-Treiberbedarf und physische Dauerhaftigkeit sind dadurch nicht vollstaendig erfasst.
+- Bei leerem FIFO entsprechen 320 Epochen **64 Sekunden bei 5 Hz**; bei Fuellstand q verbleiben `(320-q)/5` Sekunden. Ein beliebig langer USB-Ausfall oder Stromausfall kann nicht verlustfrei ueberbrueckt werden.
+- Erfasst werden ausschliesslich bisher akzeptierte/veroeffentlichte Epochen. SparkFun kann davor mehrere PVT-Nachrichten eines I2C-Bursts auf den letzten Bibliotheksdatensatz reduzieren. Weder Callback noch `flushPVT()` bilden einen zusaetzlichen FIFO; Roh-PVT-Erfassung (Variante B) wurde nicht aktiviert.
+- Reale I2C-/USB-Latenzen, FAT-Fehlermodi, Callback-/Treiberkonkurrenz und Durchsatz sowie Stackreserven sind auf Zielhardware ungeprueft. P2 hat keine Tests/Builds oder Hardwarezugriffe ausgefuehrt. Kein Upload gehoert zur P3-Buildfreigabe.
+
+**Legacy-Zeitstempel:** Die Spalte heißt `Time_UTC`. Sekunden und Millisekunden stammen aus einer einzigen Uhr (`log_clock.h`): Die erste gültige GNSS-Zeit, die der Logger sieht, verankert sie, danach läuft sie mit `millis()` weiter und kann dadurch nicht rückwärts springen. Vor der ersten gültigen GNSS-Zeit steht 1970 plus Betriebszeit als ausdrücklicher Platzhalter, kein vertrauenswürdiges UTC. Die Uhr wird nicht nachsynchronisiert und driftet mit dem Takt von `millis()`.
 
 ## 3. Hardware-Schnittstellen und Bibliotheken
 
@@ -155,7 +190,7 @@ Die generierte [src/ui/vars.h](../src/ui/vars.h) deklariert C-Getter und -Setter
 | `set_ui_temperature()` / `temperature_text` | Eine Nachkommastelle, auch negativ. Bei Werten `<= -120` (ein fehlender Sensor liefert -127) steht `--.-`. |
 | `set_ui_time()` / `time_text` | `HH:MM:SS` in MEZ oder MESZ aus UTC-Sekunden (`local_time.h`), ohne feste Offset-Annahme. Solange keine GNSS-Zeit die RTC gesetzt hat, steht `...`. |
 | `gps_online` | Der Setter speichert `!value`; der Getter steuert das Hidden-Flag des Satellitensymbols. Ein Aufruf mit `true` macht das Symbol sichtbar. |
-| `usb_status_text`, `hide_usb_ok/busy/error` | Zweite Statuszeile mit Punkt unter der GPS-Zeile, gesetzt von `set_ui_usb_status()`: gelb „USB: mounting“, grün „USB: logging“, rot „USB: no stick“ (es wird nicht geloggt) und „USB: error“ (Mount oder Schreibzugriff fehlgeschlagen; verschwindet nach dem nächsten Erfolg oder Abziehen). Der Zustand wird im Displaythread aus `usbAttachedFlag`, `usbMountedFlag` und `usbFaultFlag` gebildet; Schreibfehler sind nur über `fopen` erkennbar, `fputs`-Fehler nicht. Der Selbsttest zeigt alle vier Texte. |
+| `usb_status_text`, `hide_usb_ok/busy/error` | Zweite Statuszeile mit Punkt unter der GPS-Zeile, gesetzt von `set_ui_usb_status()`: gelb „USB: mounting“, grün „USB: logging“, rot „USB: no stick“ (es wird nicht geloggt) und „USB: error“ (Mount oder Schreibzugriff fehlgeschlagen; verschwindet nach dem nächsten Erfolg oder Abziehen). Der Zustand wird im Displaythread aus `usbAttachedFlag`, `usbMountedFlag` und `usbFaultFlag` gebildet; Legacy-Open/Write/Flush/Close-Fehler und gemeinsame Mediumfehler setzen den USB-Fehlerstatus. Isolierte GNSS-Segmentfehler rotieren nur das Segment und werden seriell gemeldet; die Zustandsflags sind atomar. |
 | `gps_status_text`, `hide_gps_ok/busy/error` | Statuszeile mit Punkt: grün bei Fix („GPS: 3D fix“, „GPS: 2D fix“), gelb bei laufendem Aufbau („searching“, „starting“, „no fix“, „reconnecting“), rot bei Fehlern („no module“, „config error“, „rate error“, „thread error“). Gesetzt von `set_ui_gps_status()`. |
 
 Die vier generierten Fonts (`DIGITAL_72`, `DIGITAL_128`, `DIGITA_32`, `DIGITAL_92`) basieren auf `fonts/aurebesh.ttf`. Nur `DIGITAL_72` enthält neben den Ziffern auch Punkt, Doppelpunkt und Bindestrich (Bereich `48-57,58,46,45`); sie bildet Uhr und Temperatur. Die anderen enthalten nur Ziffern. Zusätzlich nutzt `screens.c` Montserrat 14 und 20. Die Bilder `icon`, `rpm_warning` und `gps` liegen als eingebettete `RGB565A8`-Daten vor.
@@ -176,10 +211,12 @@ flowchart TD
     GNSS["GNSS über Wire"] --> GTASK["gnssTask()"]
     GTASK --> SNAP["GnssSnapshot (Mutex)"]
     GTASK --> RTC["RTC einmal pro Start"]
+    GTASK --> FIFO["GNSS FIFO: 320 Epochen / eigener Mutex"]
+    FIFO --> LOG
     RAW --> LOG["loggingTask()"]
     RAWT --> LOG
     SNAP --> LOG
-    LOG --> USB["USB / FAT / DRZ.txt und SENSOR.txt"]
+    LOG --> USB["USB / FAT / DRZ.txt, SENSOR.txt, GNnnnnnn.tsv"]
     RAW --> DISPLAY["displayTask()"]
     RAWT --> DISPLAY
     SNAP --> DISPLAY
@@ -192,9 +229,9 @@ flowchart TD
     LVGL --> VIDEO["Display-/Touch-Anbindung"]
 ```
 
-- **Hardware und Ablauf:** `main.cpp` erzeugt die Hardwareobjekte und die RTOS-Threads. GNSS ist als eigene Einheit (`gnss_service`) mit einer kleinen Schnittstelle (`startGnss()`, `readGnssSnapshot()`) herausgelöst, ebenso die Richtlinienlogik in den Headern.
-- **Zwei Zustandsbereiche:** Die `cur*`-Variablen in `main.cpp` und der GNSS-Snapshot versorgen Logging und Anzeige gleichermaßen; die Zustände und Textpuffer in `vars.cpp` gehören dem Displaythread. Die Anzeige liest nicht aus den Logpuffern.
-- **Synchronisierung:** `dataMutex` schützt `curRPM`, `curRpmWarning` und `curTempC` bei jedem Schreiben und Lesen. Der GNSS-Snapshot hat einen eigenen Mutex; Leser erhalten eine Kopie. Die UI-Modellvariablen werden nur im Displaythread geschrieben, die Getter von LVGL ebenfalls dort aufgerufen.
+- **Hardware und Ablauf:** `main.cpp` erzeugt die Hardwareobjekte und die RTOS-Threads. GNSS ist als eigene Einheit (`gnss_service`) mit einer kleinen Schnittstelle (`startGnss()`, `readGnssSnapshot()` und separate FIFO-Reservierung/Bestaetigung/Statistik) herausgelöst, ebenso die Richtlinienlogik in den Headern.
+- **Zustandsbereiche:** Die `cur*`-Variablen in `main.cpp` und der GNSS-Snapshot versorgen Logging und Anzeige gleichermaßen; die Zustände und Textpuffer in `vars.cpp` gehören dem Displaythread. Die Anzeige liest nicht aus den Logpuffern.
+- **Synchronisierung:** `dataMutex` schützt `curRPM`, `curRpmWarning` und `curTempC` bei jedem Schreiben und Lesen. Der GNSS-Snapshot hat einen eigenen Mutex; Leser erhalten eine Kopie. Der Log-FIFO hat einen separaten Mutex ohne I/O oder gleichzeitig gehaltenen Snapshot-Mutex. Die UI-Modellvariablen werden nur im Displaythread geschrieben, die Getter von LVGL ebenfalls dort aufgerufen.
 - **Interruptgrenze:** Der Drehzahlthread liest das vom Interrupt geschriebene Wertepaar (`lastPulseTime`, `delta_rpm`, beide `uint32_t`) in einem kritischen Abschnitt und rechnet danach außerhalb davon.
 - **Generierungsabhängigkeit:** EEZ-Variablennamen und generierte Deklarationen müssen zu den Implementierungen in `vars.cpp` passen. Neue UI-Variablen brauchen sowohl einen Eintrag im EEZ-Projekt (und eine neue Generierung) als auch Getter und Setter in `vars.cpp`.
 - **Startabhängigkeit:** `setup()` muss die GUI erzeugen, bevor `displayTask()` sie aktualisiert. Die Systemzeit kommt erst, wenn der GNSS-Thread eine gültige Zeit gesehen hat; bis dahin zeigt die Uhr `...` und das Log den Platzhalter.
@@ -208,12 +245,12 @@ Die folgenden Punkte sind aus dem Quelltext erkennbar. Soweit nichts anderes ste
 | GNSS-Zeit und RTC | Die RTC wird einmal pro Start mit ganzen UTC-Sekunden gesetzt; Die Nanosekunden werden auf ganze Sekunden gerundet und die Verarbeitungszeit verworfen, sie kann deshalb um etwa eine halbe Sekunde abweichen und wird später nicht korrigiert. Anzeigeuhr (RTC) und Logzeit (eigene Verankerung) können sich um weniger als eine Sekunde unterscheiden. Die Zeitumrechnung ist für 2000 bis 2099 ausgelegt und hat als feste Zone Mitteleuropa. |
 | GNSS-Neustart bei erster UTC-Zeit | Sobald der Empfänger erstmals gültige UTC meldet, nachdem schon Epochen veröffentlicht wurden, wird die Sitzung bewusst neu aufgebaut. Für etwa 2 bis 3 s fehlen dann Position und Geschwindigkeit, die UI zeigt „GPS: reconnecting“, die serielle Ausgabe „stream stale“. |
 | GNSS-Status | Ein nicht antwortendes Modul meldet „no module“ in Rot. `gpsOK` im Log und das Satellitensymbol folgen `connection == Receiving`, auch wenn noch keine Epoche veröffentlicht wurde. |
-| Logdateien | Spaltenname `Acc_ms-1` passt nicht zu dem Wert (horizontale Genauigkeit in Metern). Nicht verfügbare Werte (kein Fix, Sensorfehler) bleiben als leere Spalte. Die Kopfzeilen und `safeFileWrite()` werden nach dem Mountversuch ohne erneute Prüfung von `usbMountedFlag` ausgeführt. |
-| USB-Erfolgserkennung und Fehler | `mountUSB()` bewertet den Rückgabewert von `fs.mount()` direkt (`mountCode == 0`) statt eines möglicherweise veralteten `errno`. Schreibfehler werden nicht an den Logger zurückgegeben; dessen Pufferzähler werden nach dem Schreibversuch zurückgesetzt. Eine gesicherte Speicherung ist daraus nicht abzuleiten. |
-| USB-Abziehen und Restpuffer | Zwischen Unmount im Callback und Schreiben im Logger ist keine gemeinsame Sperre sichtbar. Unvollständige Puffer werden beim Abziehen weder geschrieben noch zurückgesetzt. Beim nächsten als erfolgreich bewerteten Mount werden die Dateien geleert. Aussagen wie „verlustfrei“ oder „sicheres Entfernen“ sind trotz entsprechender Kommentare nicht nachgewiesen. |
+| Logdateien | Der Legacy-Spaltenname `Acc_ms-1` bleibt trotz horizontaler Genauigkeit in Metern erhalten. Ungueltige Werte bleiben leer. Kopfzeilen werden nur nach erfolgreichem Mount fuer neue/leere Dateien geschrieben. |
+| USB-Erfolgserkennung und Fehler | Mount-Rueckgabewert sowie Open/Write/Flush/Close werden geprueft. Fehlerbloecke werden als unsicher gezaehlt. Keine Garantie physischer Dauerhaftigkeit. |
+| USB-Abziehen und Restpuffer | Nur der Logger unmountet nach abgeschlossenen Dateioperationen. Atomare Detach-Generationen entwerten betroffene Schreibbestaetigungen. Nicht versuchte Restpuffer bleiben erhalten; GNSS rotiert Segmente. Stromausfall und endlicher RAM bleiben Verlustquellen. |
 | Anzeige | Der Geschwindigkeitsfont enthält nur Ziffern; ohne Fix bleibt das Feld leer. Die angezeigte Drehzahl liegt bei konstanter Eingangsdrehzahl innerhalb von 0,6 des gefilterten Werts (Hysterese des Anzeigefilters). |
 | Temperatur | `tempOK` prüft `-55 < tC < 125`, wird aber sonst nirgends ausgewertet. Die Anzeige unterscheidet nur zwischen gültigem Wert und Werten `<= -120`. |
-| Tests | Die Compile-only-Tests laufen in keinem Build und in keiner automatischen Prüfung. Ein Eintrag in `platformio.ini` für einen `native`-Test existiert nicht; das Ausführen von `pio test` auf der Hardware wäre außerdem ein Upload und bräuchte die Freigabe aus `AGENTS.md`. |
+| Tests | Der Runner `python test/gnss_logger/run_tests.py` umfasst sieben C++-Compile-only-Suiten und acht statische Python-Quellvertraege; der Firmwarebuild fuehrt diese nicht aus. Diese Pruefungen ersetzen keine RTOS-/USB-/RTC-Laufzeitpruefung. Eine `native`-Testumgebung existiert nicht; `pio test` auf der Hardware waere ausserdem ein Upload und braeuchte die Freigabe aus `AGENTS.md`. |
 | Hardware | Konkrete Sensor-/GNSS-Modelle, elektrische Beschaltung und tatsächlich angeschlossene Geräte sind aus den Projektdateien nicht bestimmbar. |
 
 Belegstellen für diese Grenzen sind insbesondere `gnssTask()` in [src/gnss_service.cpp](../src/gnss_service.cpp), `mountUSB()`, `safeFileWrite()`, `loggingTask()`, `displayTask()` und `rpmSensorTask()` in [src/main.cpp](../src/main.cpp), die Funktionen in [src/vars.cpp](../src/vars.cpp) und [src/rpm_display_filter.h](../src/rpm_display_filter.h) sowie die Bindungen in [src/ui/screens.c](../src/ui/screens.c).
