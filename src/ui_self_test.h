@@ -1,3 +1,8 @@
+/** @file ui_self_test.h
+ * Pure startup animation frames. The display task owns its one-shot lifetime and lets a real RPM warning interrupt the sweep.
+ *
+ * Pure frame generator consumed by vars.cpp/displayTask. Elapsed startup time determines RPM/speed/temperature/status outputs; no hardware state is changed here. The caller enforces the one-shot lifecycle to prevent restart on millis wrap.
+ */
 #ifndef MOFA_UI_SELF_TEST_H
 #define MOFA_UI_SELF_TEST_H
 
@@ -38,6 +43,7 @@ constexpr bool active(uint32_t elapsedMs)
 }
 
 // Triangle sweep: 0 -> full scale in the first half, back to 0 in the second.
+/** Pure clamped three-second sweep frame from elapsed milliseconds. Caller owns one-shot lifetime and real-warning interruption; this function performs no LVGL or hardware I/O. */
 constexpr Frame frame(uint32_t elapsedMs)
 {
     const uint32_t t = elapsedMs < DURATION_MS ? elapsedMs : DURATION_MS;

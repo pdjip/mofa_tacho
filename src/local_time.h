@@ -1,3 +1,8 @@
+/** @file local_time.h
+ * Pure CET/CEST display conversion using the encoded EU transition rule. Stored timestamps remain UTC; future rule changes require a deliberate source update.
+ *
+ * Pure integer calendar helpers consumed by vars.cpp. Inputs are application-range UTC seconds; output is a local day/time offset. No RTC update, timezone database, allocation or thread state is involved.
+ */
 #ifndef MOFA_LOCAL_TIME_H
 #define MOFA_LOCAL_TIME_H
 
@@ -46,6 +51,7 @@ constexpr int64_t lastSundayDays(int64_t year, int month)
     return lastDay - weekday;
 }
 
+/** Return the encoded CET/CEST offset for UTC seconds using EU last-Sunday transitions. Intended for the application calendar range, not arbitrary int64 extremes or future political rule changes. */
 constexpr int utcOffsetHours(int64_t utcSeconds)
 {
     const int64_t days = utcSeconds >= 0 ? utcSeconds / SECONDS_PER_DAY

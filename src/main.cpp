@@ -1,3 +1,9 @@
+/** @file main.cpp
+ * Application wiring and scheduling. ISR captures pulse timing only; logger owns filesystem calls, display owns LVGL, and dataMutex protects RPM/warning/temperature. Serial policy never gates fault handling or persistent records.
+ *
+ * Dependencies: Arduino/Mbed GPIO, Wire, FAT/USBHostMSD, DallasTemperature and LVGL adapters. Inputs are pulse edges, temperature and GNSS snapshots; outputs are pin-2 warning, UI model and checked USB records. Setup dispatches independent tasks; shutdown is not implemented, so recovery is task-local and boot-lifetime state is retained.
+ */
+#include "diagnostics_config.h"
 /******************************************************************************
   Arduino GIGA R1 – Multi‐Sensor Data Logger with RTOS, USB‐Stick & Safe Mount
   Corrections for compile errors & deprecation warnings:
@@ -80,6 +86,7 @@ static_assert(ATOMIC_BOOL_LOCK_FREE == 2 && ATOMIC_INT_LOCK_FREE == 2,
 uint32_t mountedGeneration = 0; // Logger-owned below.
 bool unmountPending = false;
 usb_mount::State usbMount;
+/** Logger-owned boot-lifetime active segment path. Empty disables GNSS consumption; the monotonically advancing candidate cursor is not reset by reconnect. Work/line buffers below must never escape into asynchronous callbacks. */
 char gnssPath[32] = {};
 uint32_t nextGnssSegment = 0;
 GnssLogRecord gnssWork[gnss_log::BLOCK]; // Not on the 4-KiB logger stack.
@@ -96,11 +103,13 @@ bool tempOK = false;
 volatile uint32_t lastPulseTime = 0;
 volatile uint32_t delta_rpm = 0;
 
+/** Short-copy lock for current RPM/warning/temperature. Writers are sensor/RPM tasks; display/logger readers release before formatting, rendering or I/O. */
 rtos::Mutex dataMutex;
 float curRPM = 0.0f;
 bool curRpmWarning = false; // Published with curRPM under dataMutex.
 float curTempC = 0.0f;
 
+/** Logger-only heap-backed legacy rows, retained while unattempted. A failed attempted block is counted uncertain and cleared; these arrays are not a historical GNSS queue. */
 String rpmBuffer[USB_WRITE_BLOCK];
 uint8_t rpmBufCount = 0;
 String sensorBuffer[USB_WRITE_BLOCK];
@@ -120,15 +129,25 @@ Arduino_GigaDisplayTouch TouchDetector;
 //=============================================================================
 // 3. PROTOTYPES
 //=============================================================================
+/** ISR entry: accept rising-edge periods above the noise threshold. Only volatile timestamps are written; the RPM task copies the pair with interrupts masked. No serial, allocation or RTOS lock is permitted here. */
 void rpmISR();
+/** USB-host callback: publish attachment only. It does not establish FAT usability; the logger discovers and mounts synchronously on a later round. */
 void usbAttachHandler();
+/** USB-host callback: clear attachment and advance generation so a fast reattach cannot validate an older I/O attempt. Never unmount from the callback. */
 void usbDetachHandler();
+/** Temperature thread, never returns. Perform sensor-0 conversions nominally once per second, publish Celsius under dataMutex, and sleep between polls. Conversion latency extends the period. */
 void sensorTask();
+/** Sole filesystem owner, never returns. Perform bounded mount recovery, current-value legacy sampling, statistics and one reserved GNSS block per round. Blocking driver time is additional to the 100 ms sleep; no lossless timing guarantee is made. */
 void loggingTask();
+/** Logger only, with no open application streams. Connect and attempt FAT registration; success is usable only if attachment/generation still match. A partial failure requires unmount cleanup before retry. */
 void mountUSB();
+/** Logger only, after stream cleanup. Retire the segment and clear usability; unresolved FAT cleanup keeps registration pending and prevents writes/remount. Driver-level cancellation is not proved by this call. */
 void unmountUSB();
+/** Synchronously attempt count NUL-terminated legacy lines at path. Return true only for checked open/write/flush/close and unchanged medium. Caller accounts an attempted failed block as uncertain and never replays it. */
 bool safeFileWrite(const char *path, String lines[], uint8_t count);
+/** Sole runtime LVGL/model owner. Copy shared measurements under their locks, release locks before UI work, apply the one-shot sweep, render and sleep 2..20 ms. DMA/error reporting runs outside the flush callback. */
 void displayTask();
+/** RPM thread: convert pulse periods to raw RPM, expire after 150 ms and drive hysteretic pin-2 warning. First pulse after timeout is a reference only. Display filtering never affects this warning or logged RPM. */
 void rpmSensorTask();
 
 float microsToRPM(unsigned long deltaMicros, int pulsesPerRev);
@@ -151,9 +170,11 @@ void rpmISR()
 //=============================================================================
 // 5. SETUP
 //=============================================================================
+/** Arduino startup thread: initialize hardware/UI before dispatching application threads. Peripheral libraries may already own threads. No wait for GNSS fix, USB mount or serial monitor; READY reports dispatch attempted, not universal hardware readiness. */
 void setup()
 {
   Serial.begin(115200);
+  MOFA_DIAG(MOFA_SUBSYS_RTOS, 0, Serial.println("[BOOT] mofa_tacho base=e025292 " __DATE__ " " __TIME__));
   Wire.begin();
   Wire.setClock(I2C_CLOCK_HZ);
 
@@ -164,7 +185,12 @@ void setup()
   sensors_DS.begin();
 
   // initialisieren des Displays
-  if (Display.begin() == 0) display_rotation::install();
+  if (Display.begin() == 0) {
+    if (!display_rotation::install())
+      MOFA_DIAG(MOFA_SUBSYS_DISPLAY, 0, Serial.println("[F_DISPLAY_CALLBACK] no LVGL display"));
+  } else {
+    MOFA_DIAG(MOFA_SUBSYS_DISPLAY, 0, Serial.println("[F_DISPLAY_INIT] display initialization failed"));
+  }
   TouchDetector.begin();
   // Display.begin() already ran lv_init(). Its own tick thread advances time in
   // 16 ms steps plus delay jitter; millis() is exact and takes precedence.
@@ -185,9 +211,11 @@ void setup()
   loggingThread.start(loggingTask);
   rpmSensorThread.start(rpmSensorTask);
   if (!startGnss())
-    Serial.println("GNSS thread could not be started; other tasks remain active");
+    MOFA_DIAG(MOFA_SUBSYS_RTOS, 0, Serial.println("GNSS thread could not be started; other tasks remain active"));
+  MOFA_DIAG(MOFA_SUBSYS_RTOS, 0, Serial.println("[READY] application tasks dispatched; peripheral readiness is independent"));
 }
 
+/** Arduino background entry after setup. Application work belongs to RTOS threads; this function sleeps instead of duplicating their polling. */
 void loop()
 {
   // use chrono::milliseconds to silence deprecation warning
@@ -245,6 +273,7 @@ void usbIoReport(const usb_io_diag::Event &event)
   PreserveErrno preserve;
   uint32_t repeats = 0;
   if (!usbIoRepeats.emit(event, millis(), repeats)) return;
+#if MOFA_DEBUG_USB >= 3
   static char line[384], sizeText[21];
   gnss_log::decimalSigned(sizeText, sizeof(sizeText), event.fileSize);
   snprintf(line, sizeof(line),
@@ -270,8 +299,12 @@ void usbIoReport(const usb_io_diag::Event &event)
   };
   states("pre", event.before);
   states("post", event.after);
+#elif MOFA_DEBUG_USB >= 1
+  Serial.println("[USB:E_IO] operation failed; detailed context requires USB level 3");
+#endif
 }
 
+/** Logger-thread adapter for the allocation-free checked-write policies. Own no FILE beyond one synchronous operation; preserve first failure through cleanup. Path/mode pointers are borrowed for the operation; captured event strings are owned copies. */
 struct FileOps {
   using Handle = FILE *;
   const char *path;
@@ -361,10 +394,7 @@ struct LoggerTrace {
   unsigned initial = 0;
   uint32_t last = 0;
   bool sample() {
-#ifndef MOFA_VERBOSE_LOGGER_TRACE
-#define MOFA_VERBOSE_LOGGER_TRACE 0
-#endif
-    if (!MOFA_VERBOSE_LOGGER_TRACE) return false;
+    if (MOFA_DEBUG_LOGGER < 4 && MOFA_DEBUG_RTOS < 3) return false;
     const uint32_t now = millis();
     if (initial < 6 || uint32_t(now - last) >= 5000) {
       if (initial < 6) ++initial;
@@ -377,6 +407,7 @@ struct LoggerTrace {
 
 void loggerDiagnostic(const char *operation, const char *phase, long result = 0)
 {
+#if MOFA_DEBUG_LOGGER >= 4 || MOFA_DEBUG_RTOS >= 3
   PreserveErrno preserve;
   // Mbed Thread.h exposes these byte counts. max_stack is a watermark,
   // free_stack a current/saved-SP estimate, not a bound on the next I/O call.
@@ -389,6 +420,8 @@ void loggerDiagnostic(const char *operation, const char *phase, long result = 0)
       operation, phase, result, (unsigned long)size, (unsigned long)free,
       (unsigned long)peak, (unsigned long)(peak <= size ? size - peak : 0));
   Serial.print(line);
+
+#endif
 }
 
 bool mediumUnchanged()
@@ -412,6 +445,7 @@ bool safeFileWrite(const char *path, String lines[], uint8_t count)
   return ok && mediumOk;
 }
 
+/** Logger-only non-destructive header preparation. Preserve a nonempty file, create/append the existing header only when needed, and check medium continuity. False triggers shared recovery without truncating user data. */
 bool ensureLegacyHeader(const char *path, const char *header)
 {
   static LoggerTrace trace;
@@ -479,6 +513,7 @@ bool ensureLegacyHeader(const char *path, const char *header)
 
 // Bounded name search: at most 32 candidates per logger round, 10000 per boot.
 // O_EXCL avoids overwriting any existing segment, including one from a reboot.
+/** Logger-only bounded exclusive candidate search. O_EXCL preserves existing files; each attempted index is consumed for boot lifetime. Return Pending/Exhausted without draining FIFO, and retire failed partial creations instead of replaying them. */
 gnss_log::SegmentResult createGnssSegment()
 {
   static LoggerTrace trace;
@@ -553,7 +588,7 @@ void mountUSB()
     mountedGeneration = generation;
     usbMountedFlag.store(usbMount.usable);
     usbFaultFlag.store(!mediumUnchanged());
-    Serial.println("USB mounted; existing files preserved");
+    MOFA_DIAG(MOFA_SUBSYS_USB, 2, Serial.println("USB mounted; existing files preserved"));
   } else {
     usbFaultFlag.store(true);
     static usb_io_diag::Event event;
@@ -603,6 +638,7 @@ void unmountUSB()
   errno = error;
 }
 
+/** Logger-only formatter; returns the shared gnssLine buffer or nullptr on truncation/conversion failure. Consume before the next format/stats call. Use validity flags to leave fields empty; receipt time never replaces UTC. */
 const char *formatGnssRecord(const GnssLogRecord &r)
 {
   char sequence[21];
@@ -632,6 +668,7 @@ const char *formatGnssRecord(const GnssLogRecord &r)
 // Status records are periodic even with no subsequent epoch. Serial output
 // remains available without a medium; after recovery the new segment receives
 // the boot-wide totals, including all overflow and uncertain blocks.
+/** Logger-only accounting snapshot and optional persistent STATS row. Return false on format or attempted I/O failure. The serial copy may be disabled while file output and counters remain active. */
 bool reportGnssStats(bool toFile)
 {
   const GnssLogStats s = readGnssLogStats();
@@ -648,7 +685,7 @@ bool reportGnssStats(bool toFile)
       overflow, uncertain, legacy, (unsigned long)nextGnssSegment,
       unsigned(!gnssPath[0] && nextGnssSegment >= gnss_log::SEGMENT_LIMIT));
   if (n < 0 || size_t(n) >= sizeof(gnssLine)) return false;
-  Serial.print(gnssLine);
+  MOFA_DIAG(MOFA_SUBSYS_LOGGER, 2, Serial.print(gnssLine));
   if (!toFile) return true;
   static LoggerTrace trace;
   const bool diagnostic = trace.sample();
@@ -730,9 +767,9 @@ void loggingTask()
         newSegment = segment == gnss_log::SegmentResult::Ready;
         failed = gnss_log::sharedSegmentFailure(segment, mediumUnchanged());
         if (segment == gnss_log::SegmentResult::Exhausted)
-          Serial.println("GNSS segment names exhausted; FIFO retained, legacy logging continues");
+          MOFA_DIAG(MOFA_SUBSYS_LOGGER, 1, Serial.println("GNSS segment names exhausted; FIFO retained, legacy logging continues"));
         if (segment == gnss_log::SegmentResult::IoError)
-          Serial.println("GNSS segment I/O failed; FIFO retained, legacy attempted if medium unchanged");
+          MOFA_DIAG(MOFA_SUBSYS_LOGGER, 1, Serial.println("GNSS segment I/O failed; FIFO retained, legacy attempted if medium unchanged"));
       }
     }
     // Stats have a deadline independent of new GNSS data, including final loss.
@@ -742,7 +779,7 @@ void loggingTask()
       if (!reportGnssStats(toFile)) {
         gnssPath[0] = 0; // Isolate GNSS; never append behind a partial stats row.
         failed = !mediumUnchanged();
-        Serial.println("GNSS statistics I/O failed; segment retired");
+        MOFA_DIAG(MOFA_SUBSYS_LOGGER, 1, Serial.println("GNSS statistics I/O failed; segment retired"));
       }
     }
     if (!failed && !unmountPending && headersReady && usbMountedFlag.load() && mediumUnchanged()) {
@@ -831,10 +868,10 @@ void loggingTask()
           const bool completed = completeGnssLog(gnssWork[0].sequence, count, ok);
           if (!ok) {
             gnssPath[0] = 0; // Uncertain block is accounted once; rotate, no replay.
-            Serial.println("GNSS block I/O failed; segment retired");
+            MOFA_DIAG(MOFA_SUBSYS_LOGGER, 1, Serial.println("GNSS block I/O failed; segment retired"));
           }
           failed = !completed || !mediumUnchanged();
-          if (!completed) Serial.println("GNSS FIFO completion invariant failed");
+          if (!completed) MOFA_DIAG(MOFA_SUBSYS_LOGGER, 0, Serial.println("GNSS FIFO completion invariant failed"));
         }
       }
       if (!failed) usbFaultFlag.store(false);
@@ -959,6 +996,7 @@ void rpmSensorTask()
 }
 
 // helper
+/** Convert microseconds per pulse to revolutions/minute. Return zero for zero period or pulse count; production supplies positive two pulses/revolution. Pure arithmetic, no shared state. */
 float microsToRPM(unsigned long deltaMicros, int pulsesPerRev) {
     if (deltaMicros == 0 || pulsesPerRev == 0) return 0;  // avoid division by zero
     return (60.0f * 1'000'000.0f) / (deltaMicros * pulsesPerRev);

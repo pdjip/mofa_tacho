@@ -1,3 +1,9 @@
+/** @file gnss_service.cpp
+ * GNSS-thread-owned I2C receiver, epoch qualification and publication. FIFO admission is independent of fix validity and serial verbosity.
+ *
+ * Dependencies: Wire/SparkFun UBX and Mbed RTC/thread primitives; public contracts are in gnss_service.h. One GNSS task owns the receiver and publishes independent snapshot/FIFO copies. It cannot promise lossless delivery before the acceptance point or hard I2C timing.
+ */
+#include "diagnostics_config.h"
 #include "gnss_service.h"
 #include "gnss_epoch.h"
 
@@ -27,6 +33,7 @@ alignas(8) unsigned char gnssStack[STACK_BYTES];
 rtos::Thread gnssThread(osPriorityNormal, STACK_BYTES, gnssStack, "gnss");
 
 // Owned exclusively by gnssTask(); never read/reset by another thread.
+/** GNSS-thread-owned observation window. Counters never control epoch admission. Retry waiting sleeps in bounded slices so diagnostics can be serviced even without a receiver. */
 struct GnssDiagnostics {
     uint32_t windowStart = millis();
     uint32_t epochs = 0;
@@ -39,6 +46,7 @@ struct GnssDiagnostics {
         const uint32_t now = millis();
         const uint32_t elapsed = now - windowStart;
         if (elapsed < 10000) return;
+#if MOFA_DEBUG_GNSS >= 3
         // Fixed-point Hz avoids floating-point printf and uses the actual window.
         const uint32_t hz100 = (uint64_t(epochs) * 100000 + elapsed / 2) / elapsed;
         const uint32_t validHz100 = (uint64_t(validEpochs) * 100000 + elapsed / 2) / elapsed;
@@ -51,6 +59,7 @@ struct GnssDiagnostics {
             (unsigned long)(validHz100 / 100), (unsigned long)(validHz100 % 100),
             (unsigned long)lastDeltaMs, (unsigned long)duplicates);
         Serial.print(line);
+#endif
         windowStart = now;
         epochs = validEpochs = duplicates = lastDeltaMs = 0;
     }
@@ -69,6 +78,7 @@ struct GnssDiagnostics {
     }
 };
 
+/** Invalidate presentation fields without discarding session/clock holdover metadata. Used on connection loss and on stale reader copies; caller owns the supplied snapshot. */
 void invalidate(GnssSnapshot &s)
 {
     s.positionValid = false;
@@ -78,6 +88,7 @@ void invalidate(GnssSnapshot &s)
     s.altitudeM = s.speedKph = s.courseDeg = s.horizontalAccuracyM = NAN;
 }
 
+/** Copy one complete snapshot under snapshotMutex. Release it before FIFO admission or any hardware/serial work to avoid lock nesting. */
 void publish(const GnssSnapshot &s)
 {
     snapshotMutex.lock();
@@ -87,6 +98,7 @@ void publish(const GnssSnapshot &s)
 
 // UTC conversion without mktime's timezone/DST interpretation. Reject invalid
 // calendars and leap seconds; this RTC application supports years 2000..2099.
+/** Convert resolved PVT calendar/fraction to normalized UTC outputs; false rejects unsupported or inconsistent dates. GNSS thread only; uses Mbed RTC conversion without local timezone interpretation. */
 bool pvtUtc(const UBX_NAV_PVT_data_t &p, time_t &seconds, uint32_t &nanoseconds)
 {
     if (!p.valid.bits.validDate || !p.valid.bits.validTime || !p.valid.bits.fullyResolved ||
@@ -117,6 +129,7 @@ bool pvtUtc(const UBX_NAV_PVT_data_t &p, time_t &seconds, uint32_t &nanoseconds)
     return true;
 }
 
+/** GNSS-thread synchronous CFG-RATE check. Query fresh receiver state with bounded command timeout; cached getters alone cannot prove success. Serial verbosity does not affect the returned 200-ms/rate-1 comparison. */
 bool verifyRate()
 {
     // Require a successful fresh CFG-RATE response. The simple getters alone
@@ -126,13 +139,16 @@ bool verifyRate()
         return false;
     const uint16_t measurement = gnss.getMeasurementRate(0);
     const uint16_t navigation = gnss.getNavigationRate(0);
+#if MOFA_DEBUG_GNSS >= 2
     Serial.print("GNSS CFG-RATE: measRate_ms=");
     Serial.print(measurement);
     Serial.print(" navRate=");
     Serial.println(navigation);
+#endif
     return measurement == MEASUREMENT_MS && navigation == 1;
 }
 
+/** Configure UBX output and auto-PVT after explicit rate verification. Return false at the first rejected command; the outer task publishes ConfigError and backs off rather than blocking other tasks. */
 bool setupGPS()
 {
     if (!gnss.setI2COutput(COM_TYPE_UBX, COMMAND_TIMEOUT_MS) ||
@@ -148,6 +164,7 @@ bool setupGPS()
     return true;
 }
 
+/** Own receiver/library state for boot lifetime. Discover/configure, qualify fresh epochs, publish latest snapshot, then admit one raw-unit record under fifoMutex. Retry invalidates fix data but does not reset FIFO or accepted sequence. */
 void gnssTask()
 {
     using std::chrono::milliseconds;
@@ -172,7 +189,7 @@ void gnssTask()
             publish(current);
             if (!setupGPS()) {
                 current.connection = GnssConnection::ConfigError;
-                Serial.println("GNSS configuration failed; retrying");
+                MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println("GNSS configuration failed; retrying"));
             } else {
                 const uint32_t nextSession = current.sessionId + 1;
                 const bool clockSynchronized = current.clockSynchronized;
@@ -221,7 +238,7 @@ void gnssTask()
                                 current.connection = GnssConnection::RateError;
                                 invalidate(current);
                                 publish(current);
-                                Serial.println("GNSS persistent PVT epoch-rate mismatch; reconnecting");
+                                MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println("GNSS persistent PVT epoch-rate mismatch; reconnecting"));
                                 // Distinguish wrong CFG-RATE from reception gaps in diagnostics.
                                 verifyRate();
                                 break;
@@ -303,7 +320,7 @@ void gnssTask()
                 }
                 if (current.connection != GnssConnection::RateError) {
                     current.connection = GnssConnection::Stale;
-                    Serial.println("GNSS PVT stream stale; reconnecting");
+                    MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println("GNSS PVT stream stale; reconnecting"));
                 }
                 invalidate(current);
             }
@@ -315,6 +332,7 @@ void gnssTask()
 }
 } // namespace
 
+/** Setup-only, one-shot task launch. Publish an invalid initial snapshot before starting the static-stack thread; return false and publish ThreadError if RTOS dispatch fails. */
 bool startGnss()
 {
     GnssSnapshot initial;
@@ -326,6 +344,7 @@ bool startGnss()
     return false;
 }
 
+/** Return an owned latest-value copy under snapshotMutex. Apply stale/no-sample invalidation to the copy; never mutate the producer or hold the lock while consumers render/write. */
 GnssSnapshot readGnssSnapshot()
 {
     snapshotMutex.lock();
@@ -340,6 +359,7 @@ GnssSnapshot readGnssSnapshot()
     return copy;
 }
 
+/** Sole logger consumer: briefly lock FIFO and copy up to limit due records into caller storage. Returned count remains queued/reserved until exactly one matching completion; do I/O after this returns. */
 size_t reserveGnssLog(GnssLogRecord *out, size_t limit, uint32_t now)
 {
     fifoMutex.lock();
@@ -348,6 +368,7 @@ size_t reserveGnssLog(GnssLogRecord *out, size_t limit, uint32_t now)
     return count;
 }
 
+/** Sole logger consumer: verify sequence/count against outstanding reservation. A failed attempt removes the entire block as uncertain, without replay; false leaves the invalid completion uncommitted. */
 bool completeGnssLog(uint64_t firstSequence, size_t count, bool success)
 {
     fifoMutex.lock();
@@ -356,6 +377,7 @@ bool completeGnssLog(uint64_t firstSequence, size_t count, bool success)
     return valid;
 }
 
+/** Copy consistent boot-wide counters under fifoMutex; queued includes reserved records. Returned value needs no lock and may immediately become older than producer state. */
 GnssLogStats readGnssLogStats()
 {
     fifoMutex.lock();

@@ -1,3 +1,8 @@
+/** @file usb_io_diag.h
+ * Owned first-failure snapshots and filename-independent global throttling. Update class/global counters even when output is disabled. Eight-class retention; totals saturate and deadlines use unsigned elapsed time.
+ *
+ * Header-only value policies, independent of USB hardware. The logger is sole state owner and supplies event/millis observations. Return values decide print eligibility, not whether a file operation succeeded; driver races remain outside this policy.
+ */
 #ifndef MOFA_USB_IO_DIAG_H
 #define MOFA_USB_IO_DIAG_H
 
@@ -66,6 +71,7 @@ constexpr bool sameFailure(const Event &a, const Event &b) {
 
 class Repeats {
 public:
+    /** Logger-owned accounting and output-budget decision. Always capture latest and increment retained class counts first; false suppresses output, not fault detection. Filename is excluded from identity; counters saturate. */
     constexpr bool emit(const Event &event, uint32_t now, uint32_t &count) {
         latest = event;
         size_t slot = 0;

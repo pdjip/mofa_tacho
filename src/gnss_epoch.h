@@ -1,3 +1,8 @@
+/** @file gnss_epoch.h
+ * Pure epoch freshness/rate policies shared by firmware and host tests. Unsigned host-clock differences require the documented wrap horizons; provisional receiver time must not masquerade as trusted UTC.
+ *
+ * Input is UBX epoch timing plus host receipt/UTC evidence; output controls GNSS session admission and reconnection decisions. Instances belong to the GNSS thread. No I2C or RTOS behavior is simulated; unsigned-time horizons remain integration constraints.
+ */
 #ifndef MOFA_GNSS_EPOCH_H
 #define MOFA_GNSS_EPOCH_H
 
@@ -22,6 +27,7 @@ enum class EpochResult { Baseline, New, Duplicate, Old, Invalid };
 // packets arrive in bursts and never qualify.
 class EpochTracker {
 public:
+    /** GNSS-thread classifier: tow in GPS-week milliseconds, hostMs wrapping receipt time, optional UTC milliseconds. Return Baseline/New/Duplicate/Old/Invalid; rejected candidates cannot advance the accepted anchor until requalified. */
     constexpr EpochResult observe(uint32_t tow, uint32_t hostMs,
                                   bool utcValid, int64_t utcMs)
     {
@@ -125,6 +131,7 @@ private:
 // message is not. iTOW spacing is measured, not the arrival time of an I2C burst.
 class RateMonitor {
 public:
+    /** Feed one accepted epoch interval and host interval into the rate monitor. Retain an eight-interval bit history and disjoint host windows; one delayed interval must not alone trigger reconnection. */
     constexpr void observe(uint32_t deltaMs, uint32_t hostDeltaMs)
     {
         history_ = uint8_t((history_ << 1) | (deltaMs != PERIOD_MS));
@@ -148,6 +155,7 @@ public:
         }
     }
     constexpr bool ready() const { return consecutiveGood_ >= 3; }
+    /** Report persistent receiver/host-rate disagreement from accumulated observations. Does not itself alter hardware or reset the monitor. */
     constexpr bool faulty() const
     {
         unsigned bad = 0;

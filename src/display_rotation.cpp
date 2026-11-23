@@ -1,3 +1,9 @@
+/** @file display_rotation.cpp
+ * LVGL public-coordinate mapping into the DSI framebuffer. Tight RGB565 staging is reusable across flushes; DMA completion or safe abort precedes source reuse.
+ *
+ * Dependencies: LVGL public APIs, DSI framebuffer access and STM32 HAL/cache primitives. Setup installs the callback; displayTask owns subsequent calls. Inputs are transient LVGL areas/pixels, outputs are RGB565 framebuffer writes and ready notification. DMA ownership/cache assumptions require board verification.
+ */
+#include "diagnostics_config.h"
 #include "display_rotation.h"
 #include "display_rotation_buffer.h"
 #include "display_dma_contract.h"
@@ -30,6 +36,7 @@ struct Parameters {
     GeometryReject policy = GeometryReject::None;
     bool valid = false, mapped = false, rawOffsetZero = false;
 };
+#if MOFA_DEBUG_DISPLAY >= 3
 Parameters firstParameters;
 struct TransferEvidence {
     uint32_t width = 0, height = 0, pixels = 0;
@@ -37,7 +44,9 @@ struct TransferEvidence {
     bool returned = false;
 };
 TransferEvidence firstTransfer;
+#endif
 
+#if MOFA_DEBUG_DISPLAY >= 1
 char diagnosticLine[256];
 struct Message {
     size_t length = 0;
@@ -69,6 +78,7 @@ struct Message {
     }
 };
 
+#if MOFA_DEBUG_DISPLAY >= 3
 bool reportParameters(unsigned part) {
     const Parameters &p = firstParameters;
     Message message;
@@ -102,6 +112,10 @@ bool reportParameters(unsigned part) {
     return message.send();
 }
 
+#endif
+
+#endif
+
 constexpr uint32_t initialGeometryMask(const Parameters &p) {
     return (p.area.x1 < 0 ? 1u << 0 : 0) |
            (p.area.y1 < 0 ? 1u << 1 : 0) |
@@ -122,6 +136,7 @@ void record(Error error, size_t bytes) {
     requested[index] = bytes;
 }
 
+/** Display-thread adapter binding pure flush policy to realloc, LVGL rotation and checked HAL DMA2D. Framebuffer address is borrowed from DSI for one synchronous flush; hardware stability is an integration assumption. */
 struct Hardware {
     lv_display_t *display;
     uint32_t framebuffer;
@@ -166,6 +181,7 @@ struct Hardware {
         } transfer{pixels, plan, framebuffer};
         const auto result = dmaOwnership.transfer(transfer);
         rotationBuffer.pinned = dmaOwnership.pinned;
+#if MOFA_DEBUG_DISPLAY >= 3
         if (!firstTransfer.returned) {
             firstTransfer.width = plan.width;
             firstTransfer.height = plan.height;
@@ -174,6 +190,7 @@ struct Hardware {
             // Checked transfer result, not proof of the visible panel output.
             firstTransfer.returned = true;
         }
+#endif
         return result == display_dma::Result::Complete ? Error::None : Error::Transfer;
     }
     void failed(Error error, size_t bytes) { record(error, bytes); }
@@ -182,6 +199,7 @@ struct Hardware {
 
 // Project-owned symbol: replaces the registered callback using LVGL's public
 // setter; it neither overrides nor duplicates Arduino_H7_Video's symbol.
+/** LVGL callback on the display thread. Borrow display/area/pixels only for this call; validate coordinate mapping before staging. Restore errno and complete LVGL once on all policy outcomes; never print here. */
 void projectDisplayFlush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
     const int saved = errno;
@@ -263,6 +281,7 @@ void projectDisplayFlush(lv_display_t *display, const lv_area_t *area, uint8_t *
             request.preflight = Error::Geometry;
         }
     }
+#if MOFA_DEBUG_DISPLAY >= 3
     const bool first = !firstParameters.valid;
     if (first) {
         parameters.request = request;
@@ -275,10 +294,14 @@ void projectDisplayFlush(lv_display_t *display, const lv_area_t *area, uint8_t *
         firstParameters.result = result;
         firstParameters.policy = details.geometryReject;
     }
+#else
+    flush(rotationBuffer, request, hardware);
+#endif
     errno = saved;
 }
 } // namespace
 
+/** Setup-only public callback replacement after successful video initialization. False means no default display; no library symbol override or duplicate framebuffer allocation is used. */
 bool install() {
     lv_display_t *display = lv_display_get_default();
     if (!display) { record(Error::Display, 0); return false; }
@@ -286,11 +309,22 @@ bool install() {
     return true;
 }
 
+/** Display thread outside LVGL flush. Emit quarantine status once plus level-dependent bounded evidence; restore errno. This does not prove visible pixels or recover a pinned buffer. */
 void reportErrors()
 {
+    // Unrecoverable ownership loss is operational status, independent of verbosity.
+    static bool quarantineReported = false;
+    if (rotationBuffer.pinned && !quarantineReported) {
+        const int saved = errno;
+        Serial.println("[F_DISPLAY_PINNED] DMA source quarantined until reboot");
+        quarantineReported = true;
+        errno = saved;
+    }
+#if MOFA_DEBUG_DISPLAY >= 1
     // Same display-thread owner as flush: no mutex or ISR work. One short
     // fixed line per five seconds at most, and no print inside a flush.
     const int saved = errno;
+#if MOFA_DEBUG_DISPLAY >= 3
     static unsigned parameterPart = 0;
     while (firstParameters.valid && parameterPart < 3) {
         if (!reportParameters(parameterPart)) { errno = saved; return; }
@@ -307,6 +341,7 @@ void reportErrors()
         message.text(" visible-check=required");
         transferReported = message.send();
     }
+#endif
     static uint32_t reported[static_cast<unsigned>(Error::Count)] = {};
     static bool printed = false;
     static uint32_t last = 0;
@@ -325,5 +360,7 @@ void reportErrors()
         break;
     }
     errno = saved;
+
+#endif
 }
 } // namespace display_rotation

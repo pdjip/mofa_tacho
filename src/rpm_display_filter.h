@@ -1,3 +1,8 @@
+/** @file rpm_display_filter.h
+ * Display-only adaptive RPM smoothing. Does not affect raw logging or physical warning output; update belongs exclusively to the display thread.
+ *
+ * Pure float/integer policy consumed by displayTask; input raw RPM and host elapsed time, output displayed integer RPM. Instance state is single-owner with boot/task lifetime. Tuning constants approximate jitter tolerance and are not a sensor calibration.
+ */
 #ifndef MOFA_RPM_DISPLAY_FILTER_H
 #define MOFA_RPM_DISPLAY_FILTER_H
 
@@ -19,6 +24,7 @@ public:
         return 30.0f + 270.0f / (1.0f + relative * relative);
     }
 
+    /** Display-thread state update: raw RPM plus wrapping host milliseconds produce integer displayed RPM. Nonpositive/NaN input resets display state to zero. No hardware warning or logger state is changed. */
     constexpr int32_t update(float raw, uint32_t nowMs)
     {
         const uint32_t elapsed = initialized_ ? nowMs - lastMs_ : 0;

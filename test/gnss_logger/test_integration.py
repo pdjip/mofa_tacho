@@ -28,8 +28,110 @@ def function(source, name):
         end += 1
     return source[start:end]
 
+def cpp_tokens(text):
+    """Yield code tokens with spans; delimiters in C++ literals/comments are opaque."""
+    i = 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        start = i
+        if text.startswith('//', i):
+            end = text.find('\n', i + 2)
+            i = len(text) if end < 0 else end
+            continue
+        if text.startswith('/*', i):
+            end = text.find('*/', i + 2)
+            if end < 0:
+                raise ValueError('Unterminated C++ comment')
+            i = end + 2
+            continue
+        raw = re.match(r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(', text[i:])
+        if raw:
+            closing = ')' + raw[1] + '"'
+            end = text.find(closing, i + raw.end())
+            if end < 0:
+                raise ValueError('Unterminated raw string')
+            i = end + len(closing)
+        else:
+            quoted = re.match(r'''(?:u8|u|U|L)?(["'])''', text[i:])
+            if quoted:
+                quote = quoted[1]
+                i += quoted.end()
+                while i < len(text):
+                    if text[i] == '\\':
+                        i += 2
+                    elif text[i] == quote:
+                        i += 1
+                        break
+                    else:
+                        i += 1
+                else:
+                    raise ValueError('Unterminated quoted literal')
+            else:
+                word = re.match(r'[A-Za-z_][A-Za-z_0-9]*|[0-9]+', text[i:])
+                i += word.end() if word else 1
+        yield text[start:i], start, i
+
+
+def without_serial_gates(text):
+    """Unwrap only GNSS level-1 single println calls; preserve their entire payload.
+
+    This is not a preprocessor: other macros/levels are intentionally retained so
+    the historical functional comparison rejects any unexpected change in scope.
+    """
+    tokens = list(cpp_tokens(text))
+    edits = []
+    for index, (token, start, _) in enumerate(tokens):
+        if token != 'MOFA_DIAG' or index + 1 == len(tokens) or tokens[index + 1][0] != '(':
+            continue
+        stack = ['(']
+        boundaries = [tokens[index + 1][2]]
+        closing = None
+        for j in range(index + 2, len(tokens)):
+            value, begin, end = tokens[j]
+            if value in ('(', '[', '{'):
+                stack.append(value)
+            elif value in (')', ']', '}'):
+                if not stack or stack.pop() != {')': '(', ']': '[', '}': '{'}[value]:
+                    raise ValueError('Unbalanced MOFA_DIAG invocation')
+                if not stack:
+                    closing = (begin, end)
+                    break
+            elif value == ',' and len(stack) == 1:
+                boundaries.extend([begin, end])
+        if closing is None:
+            raise ValueError('Unterminated MOFA_DIAG invocation')
+        # Exactly three arguments; variadic payload commas must be nested.
+        if len(boundaries) != 5:
+            continue
+        first = text[boundaries[0]:boundaries[1]]
+        level = text[boundaries[2]:boundaries[3]]
+        if [t[0] for t in cpp_tokens(first)] != ['MOFA_SUBSYS_GNSS'] or [t[0] for t in cpp_tokens(level)] != ['1']:
+            continue
+        payload = text[boundaries[4]:closing[0]].strip()
+        code = [t[0] for t in cpp_tokens(payload)]
+        if code[:4] != ['Serial', '.', 'println', '('] or code[-1:] != [')']:
+            raise ValueError('Only the authorized GNSS println wrapper can be normalized')
+        # Its opening parenthesis must close at the end: no extra statements.
+        depth = 0
+        for n, value in enumerate(code[3:], 3):
+            if value == '(':
+                depth += 1
+            elif value == ')':
+                depth -= 1
+                if depth == 0 and n != len(code) - 1:
+                    raise ValueError('Extra code after GNSS println')
+        edits.append((start, closing[1], payload))
+    for start, end, payload in reversed(edits):
+        text = text[:start] + payload + text[end:]
+    # Only this exact CFG-RATE serial gate is authorized; retain all inner bytes.
+    return re.sub(r'^#if MOFA_DEBUG_GNSS >= 2\n((?:(?!^#).)*?)^#endif\n',
+                  lambda match: match[1], text, flags=re.M | re.S)
+
+
 def compact(text):
-    return re.sub(r"\s+", "", text)
+    return re.sub(r"\s+", "", without_serial_gates(text))
 
 def literal(source, variable):
     match = re.search(r"\b" + variable + r"\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*)+);", source)
@@ -48,7 +150,7 @@ class SourceContracts(unittest.TestCase):
     def test_existing_utc_rate_snapshot_and_ui_code_are_preserved(self):
         old_gnss = original("src/gnss_service.cpp")
         for name in ["pvtUtc", "verifyRate", "setupGPS", "invalidate", "publish", "startGnss", "readGnssSnapshot"]:
-            self.assertEqual(function(GNSS, name), function(old_gnss, name), name)
+            self.assertEqual(without_serial_gates(function(GNSS, name)), function(old_gnss, name), name)
         for name in ["displayTask", "sensorTask", "rpmISR", "rpmSensorTask", "microsToRPM"]:
             current = function(MAIN, name)
             if name == "displayTask":
@@ -424,6 +526,35 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("PreserveErrno preserve;", heap_capture)
         self.assertIn("i + 1 < sizeof(snapshot.path)", heap_capture)
         self.assertIn("snapshot.path[i] = '\\0';", heap_capture)
+
+
+class SerialGateNormalization(unittest.TestCase):
+    def test_literals_nested_calls_comments_and_multiple_wrappers(self):
+        payloads = [
+            'Serial.println("configuration failed; retrying")',
+            r"""Serial.println(format("comma, semi; parens() escaped\" tail", nested((1), '(')))""",
+            'Serial.println(R"tag(raw );, \\" text)tag")',
+            'Serial.println(/* ), ; */ nested(1, 2))',
+        ]
+        wrapped = '\n'.join('MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, ' + p + ');' for p in payloads)
+        self.assertEqual(without_serial_gates(wrapped), '\n'.join(p + ';' for p in payloads))
+
+    def test_strings_comments_and_other_scopes_are_not_unwrapped(self):
+        for text in ['"MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println(0))"',
+                     '// MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println(0));\n',
+                     'MOFA_DIAG(MOFA_SUBSYS_USB, 1, Serial.println(0));',
+                     'MOFA_DIAG(MOFA_SUBSYS_GNSS, 2, Serial.println(0));']:
+            self.assertEqual(without_serial_gates(text), text)
+
+    def test_payload_mutation_remains_visible_and_extra_statements_are_rejected(self):
+        old = 'Serial.println("old");'
+        changed = 'MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println("new"));'
+        self.assertNotEqual(without_serial_gates(changed), old)
+        for text in ['MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, updateState());',
+                     'MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println(0); mutate());',
+                     'MOFA_DIAG(MOFA_SUBSYS_GNSS, 1, Serial.println("bad));']:
+            with self.assertRaises(ValueError):
+                without_serial_gates(text)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

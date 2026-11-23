@@ -1,3 +1,8 @@
+/** @file log_clock.h
+ * Legacy log clock with a one-time GNSS anchor. Before synchronization, calendar-shaped uptime is a placeholder rather than trusted UTC.
+ *
+ * Pure per-logger state used by legacy row formatting; no RTC/calendar dependency. Input is one UTC anchor and frequently sampled wrapping host time; output is milliseconds. Call at least once per millis cycle after sync; placeholder time before sync is not trusted UTC.
+ */
 #ifndef MOFA_LOG_CLOCK_H
 #define MOFA_LOG_CLOCK_H
 
@@ -9,11 +14,12 @@
 // Seconds from the RTC combined with milliseconds from millis() % 1000 are two
 // unrelated clocks, so a row could carry an earlier time than the row before it.
 // This is one clock: the first GNSS UTC sample anchors it, and from then on
-// log time = anchor + elapsed host time, so rows are strictly monotonic. It runs
+// log time = anchor + elapsed host time, so time is nondecreasing after synchronization (equal host times may repeat). It runs
 // at the host crystal rate, like millis(), and is not re-synchronised, so
 // reconnects of the receiver can never step it.
 namespace log_clock {
 
+/** Single-logger clock state, no internal lock. First GNSS sync anchors UTC; subsequent calls accumulate unsigned host deltas. Same-millisecond calls may return equal times; the first synchronization can change the placeholder epoch. */
 class Clock {
 public:
     constexpr bool synchronized() const { return synchronized_; }

@@ -1,3 +1,8 @@
+/** @file gnss_log_fifo.h
+ * Allocation-free 320-record queue and checked file policies. Caller supplies locking. accepted = written + queued + overflow + uncertain; queued includes reservations. Each record is 64 bytes; overflow drops the newest arrival and still consumes a sequence.
+ *
+ * Pure header policy with no Arduino dependencies. The service supplies external mutex ownership; the logger supplies synchronous file operations. Input records are copied by value, output work buffers belong to the caller. State lives across reconnects and does not establish physical storage durability.
+ */
 #ifndef MOFA_GNSS_LOG_FIFO_H
 #define MOFA_GNSS_LOG_FIFO_H
 
@@ -76,6 +81,7 @@ constexpr SegmentResult findSegment(uint32_t &next, Create create) {
 // entries remain in queued and cannot be overwritten by a full-ring producer.
 class Fifo {
 public:
+    /** Admit a producer record under the external FIFO mutex. Sequence/accepted advance even when full; false means Drop-newest overflow, preserving every queued/reserved entry. */
     constexpr bool push(GnssLogRecord record) {
         record.sequence = ++stats_.accepted;
         if (stats_.queued == CAPACITY) { ++stats_.overflow; return false; }
@@ -83,6 +89,7 @@ public:
         if (++stats_.queued > stats_.highWater) stats_.highWater = stats_.queued;
         return true;
     }
+    /** Caller supplies writable storage for limit records and external synchronization. Zero means empty/not due/already reserved. Partial-block modular age must be below half a millis cycle; copying does not consume records. */
     constexpr size_t reserve(GnssLogRecord *out, size_t limit, uint32_t now) {
         if (!out || reserved_ || !stats_.queued || !limit) return 0;
         // A producer can publish after the caller sampled now. Reject future
@@ -96,6 +103,7 @@ public:
         for (size_t i = 0; i < reserved_; ++i) out[i] = records_[(head_ + i) % CAPACITY];
         return reserved_;
     }
+    /** Commit only the exact reserved sequence/count. Classify the whole attempt once as written or uncertain, release its slots and preserve accepted = written + queued + overflow + uncertain. False changes no state. */
     constexpr bool complete(uint64_t firstSequence, size_t count, bool success) {
         if (!reserved_ || count != reserved_ || records_[head_].sequence != firstSequence)
             return false;
@@ -105,6 +113,7 @@ public:
         reserved_ = 0;
         return true;
     }
+    /** Read a value snapshot under the caller-supplied mutex. This class itself provides no inter-thread synchronization. */
     constexpr GnssLogStats stats() const { return stats_; }
 private:
     GnssLogRecord records_[CAPACITY] = {};
@@ -130,6 +139,7 @@ constexpr bool writeOpened(Ops &io, typename Ops::Handle file, size_t count, Lin
 }
 
 template<class Ops, class Lines>
+/** Open a borrowed path/mode synchronously and delegate checked writing. Open failure returns false without a close; callers must distinguish attempted blocks from records never reserved. */
 constexpr bool writeFile(Ops &io, const char *path, const char *mode, size_t count, Lines line) {
     const auto file = io.open(path, mode);
     return file && writeOpened(io, file, count, line);

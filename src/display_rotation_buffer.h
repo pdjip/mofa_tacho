@@ -1,3 +1,8 @@
+/** @file display_rotation_buffer.h
+ * Pure RGB565 planning and scratch-buffer ownership. Validate byte extents before allocation/copy. Every flush completes exactly once, including failures; pinned storage must never be resized or modified.
+ *
+ * No device dependencies: injectable operations provide stride/allocation/rotation/transfer. Requests borrow source bytes; Buffer owns staging for boot lifetime. Caller serializes access and propagates uncertain DMA ownership to pinned before another flush.
+ */
 #ifndef MOFA_DISPLAY_ROTATION_BUFFER_H
 #define MOFA_DISPLAY_ROTATION_BUFFER_H
 
@@ -47,6 +52,7 @@ constexpr bool multiply(size_t a, size_t b, size_t &out) {
 }
 
 template<class Ops>
+/** Pure validation of borrowed source geometry and accessible bytes. Produce a bounded RGB565 DMA plan or classification; ops.stride is called only after arithmetic checks. No allocation or source access occurs here. */
 constexpr Error makePlan(const Request &request, Plan &plan, Ops &ops) {
     if (request.preflight != Error::None) return request.preflight;
     if (!request.rgb565) return Error::Format;
@@ -89,6 +95,7 @@ struct Buffer {
     size_t capacity = 0;
     bool pinned = false;
     template<class Ops>
+    /** Require exclusive display ownership. Reuse capacity or attempt growth; false preserves the prior pointer/capacity. Pinned buffers cannot grow or be reused for pixel writes. */
     constexpr bool ensure(size_t required, Ops &ops) {
         if (!required || pinned) return false;
         if (data && required <= capacity) return true;
@@ -104,6 +111,7 @@ struct Buffer {
 // The hardware adapter and regression fakes use this same ordering: validate,
 // grow if necessary, rotate, DMA, then exactly one ready on every outcome.
 template<class Ops>
+/** Display-thread synchronous pipeline over injectable operations. Validate, ensure owned staging, copy/rotate, transfer, report failure and signal ready once. A quarantined source remains untouched even though LVGL is released. */
 constexpr Error flush(Buffer &buffer, const Request &request, Ops &ops, Plan *details = nullptr) {
     Plan plan;
     Error error = makePlan(request, plan, ops);

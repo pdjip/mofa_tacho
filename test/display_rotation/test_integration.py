@@ -26,7 +26,11 @@ def body(source, name):
 class RotationIntegration(unittest.TestCase):
     def test_setup_callback_registration_and_unique_project_name(self):
         setup = body(MAIN, "setup")
-        self.assertIn("if (Display.begin() == 0) display_rotation::install();", setup)
+        # STEP 230 adds failure status while keeping installation conditional on begin success.
+        self.assertIn("if (Display.begin() == 0) {", setup)
+        self.assertIn("if (!display_rotation::install())", setup)
+        self.assertIn("[F_DISPLAY_CALLBACK]", setup)
+        self.assertIn("[F_DISPLAY_INIT]", setup)
         self.assertLess(setup.index("display_rotation::install()"), setup.index("ui_init();"))
         for thread in ["displayThread.start", "sensorThread.start", "loggingThread.start", "rpmSensorThread.start", "startGnss()"]:
             self.assertLess(setup.index("display_rotation::install()"), setup.index(thread))

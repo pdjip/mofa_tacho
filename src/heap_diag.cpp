@@ -1,3 +1,9 @@
+/** @file heap_diag.cpp
+ * Bounded heap evidence collection. The allocator callback records only; logger drains after cleanup. Diagnostic verbosity affects output, never allocation failure capture.
+ *
+ * Dependencies: installed Mbed heap statistics/tracing, fixed History storage and logger serial output. Setup registers capture; allocator callbacks publish a bounded ring; logger reads it using release/acquire ordering. Snapshots observe system-wide concurrency rather than attributing a leak to one subsystem.
+ */
+#include "diagnostics_config.h"
 #include "heap_diag.h"
 #include "gnss_log_fifo.h"
 #include <Arduino.h>
@@ -21,7 +27,9 @@ bool roundGood = true, roundClosed = false, baselineSet = false;
 uint32_t nextId = 0, lastPairPrint = 0, printedPairs = 0;
 Token roundBaseline;
 // Logger/setup-owned output and scratch space; never touched by the tracer.
+#if MOFA_DEBUG_MEMORY >= 3
 char line[384], deltaText[21], countText[21], baselineText[21], requestedText[21];
+#endif
 
 struct AllocationFailure {
     uintptr_t caller = 0;
@@ -36,6 +44,7 @@ static_assert(ATOMIC_INT_LOCK_FREE == 2, "Heap failure ring needs lock-free coun
 // suppresses nested traces. This is therefore one serialized producer and one
 // logger consumer. Release/acquire publishes slots without an additional lock.
 // No stats getter, clock, serial, allocation or blocking API is used here.
+/** Mbed allocation callback, serialized by the tracer lock. Record only nonzero-size NULL results into the fixed ring; never fetch heap stats, print, allocate or block here. Logger is the single consumer. */
 void allocationTrace(uint8_t operation, void *result, void *caller, ...)
 {
     if (result || operation == MBED_MEM_TRACE_FREE) return;
@@ -110,6 +119,7 @@ Token tokenFor(const Snapshot &snapshot) {
 
 void printSnapshot(const Snapshot &snapshot, const char *group)
 {
+#if MOFA_DEBUG_MEMORY >= 3
     static const char *const names[] = {"init-before-usb", "before-open", "after-close",
         "before-mount", "after-mount", "after-unmount", "first-successful-round", "io-error", "ENOMEM",
         "open-failed-no-close", "after-error-cleanup"};
@@ -125,6 +135,8 @@ void printSnapshot(const Snapshot &snapshot, const char *group)
         (unsigned long)snapshot.stats.overhead, (unsigned long)snapshot.stats.reserved,
         deltaText, countText, unsigned(baselineSet), baselineText, snapshot.error);
     Serial.print(line);
+
+#endif
 }
 
 void printHistory(const History<Snapshot, HISTORY> &history, const char *group) {
@@ -205,6 +217,7 @@ void afterUnmount(bool success) {
     }
 }
 
+/** Logger-owned first-error/first-ENOMEM freezing. Copy bounded owned histories once without printing; later cleanup reporting cannot mutate the frozen evidence. */
 void ioError(const char *path, int error, Token token)
 {
     PreserveErrno preserve;
@@ -222,6 +235,7 @@ void ioError(const char *path, int error, Token token)
 
 void operationFinished(bool success) { roundGood = roundGood && success; }
 void startRound() { roundGood = true; roundClosed = false; }
+/** Logger end-of-round observation. Establish baseline only after a successful ready round with a closed stream, then service pending evidence; values include concurrent system allocations. */
 void finishRound(bool ready)
 {
     PreserveErrno preserve;
@@ -261,10 +275,14 @@ void reportPending()
     uint32_t tail = failureTail.load(std::memory_order_relaxed);
     if (tail == head) return;
     printed = true; last = now;
+#if MOFA_DEBUG_MEMORY >= 1 && MOFA_DEBUG_MEMORY < 3
+    Serial.println("[MEMORY:E_ALLOC] allocation failure observed");
+#endif
     // Bounded to one ring's worth, even if another thread keeps failing.
     for (unsigned n = 0; tail != head && n < FAILURES; ++n, ++tail) {
         const AllocationFailure failure = failures[tail % FAILURES];
         failureTail.store(tail + 1, std::memory_order_release);
+#if MOFA_DEBUG_MEMORY >= 3
         const uint64_t requested = uint64_t(failure.count) * failure.size;
         gnss_log::decimalUnsigned(requestedText, sizeof(requestedText), requested);
         snprintf(line, sizeof(line),
@@ -273,6 +291,7 @@ void reportPending()
             (unsigned long)failure.size, (unsigned long)failure.caller,
             (unsigned long)failureLost.load(std::memory_order_relaxed));
         Serial.print(line);
+#endif
     }
 }
 } // namespace heap_diag

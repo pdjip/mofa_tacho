@@ -1,3 +1,8 @@
+/** @file vars.cpp
+ * Handwritten EEZ variable bindings. Display task owns strings/flags after setup. Generated text setters are no-ops; gps_online stores the inverse visibility flag expected by the UI.
+ *
+ * Dependencies: generated ui/vars.h ABI, local_time conversion and application status types. Setup initializes placeholders; displayTask alone mutates buffers thereafter. Text getters borrow static storage, generated text setters are no-ops, and unavailable values follow the existing glyph/sentinel conventions.
+ */
 #include <Arduino.h>
 #include "ui/vars.h"
 #include "vars.h"
@@ -136,6 +141,7 @@ void set_ui_usb_status(const UsbState state)
     hide_usb_error = !error;
 }
 
+/** Display-only composite override of live model values during the startup sweep. Borrow frame by const reference; static binding buffers outlive all EEZ getter calls. */
 void set_ui_self_test(const ui_self_test::Frame &frame)
 {
     using ui_self_test::GpsStep;
@@ -244,6 +250,7 @@ extern "C" void set_var_velocity_text(const char *value)
 }
 
 
+/** Generated visibility binding: store the inverse of the supplied online state. Callers pass connection status, not the backing hide flag. */
 extern "C" void set_var_gps_online(const bool value)
 {
     gps_online = !value;
