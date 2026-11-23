@@ -160,6 +160,70 @@
         "defaultValue": "false",
         "persistent": false,
         "native": false
+      },
+      {
+        "objID": "ef51749d-46d1-4443-bd1c-1476da4c17c4",
+        "name": "gps_status_text",
+        "type": "string",
+        "defaultValue": "\"\"",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "52c6522a-de5b-4b07-b9b6-cbc64d806eaa",
+        "name": "hide_gps_ok",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "8073a017-f6d2-4810-9eaa-5b2fdbe1097d",
+        "name": "hide_gps_busy",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "aa12368b-fe43-4e15-a672-c1acc19db0a2",
+        "name": "hide_gps_error",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "f5ae4d59-7a60-437f-b1b9-3af7780cdd05",
+        "name": "usb_status_text",
+        "type": "string",
+        "defaultValue": "\"\"",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "7ffbdeac-f0d3-4bb8-a493-bb24f8101da1",
+        "name": "hide_usb_ok",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "0abf3fa1-c190-4bef-84af-2a9f9127cc74",
+        "name": "hide_usb_busy",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
+      },
+      {
+        "objID": "4d91f5c8-bada-4925-b9cf-b06e0c4a2015",
+        "name": "hide_usb_error",
+        "type": "boolean",
+        "defaultValue": "true",
+        "persistent": false,
+        "native": false
       }
     ],
     "structures": [],
@@ -259,15 +323,18 @@
                       },
                       "INDICATOR": {
                         "DEFAULT": {
-                          "arc_color": "#ffd41f",
-                          "arc_width": 40,
+                          "arc_color": "#f2a100",
+                          "arc_width": 30,
                           "arc_rounded": false,
-                          "arc_opa": 150
+                          "arc_opa": 255
                         }
                       },
                       "MAIN": {
                         "DEFAULT": {
-                          "arc_opa": 0
+                          "arc_opa": 255,
+                          "arc_color": "#d2d7dd",
+                          "arc_width": 30,
+                          "arc_rounded": false
                         }
                       }
                     }
@@ -330,10 +397,10 @@
                       },
                       "INDICATOR": {
                         "DEFAULT": {
-                          "arc_color": "#b10000",
-                          "arc_width": 40,
+                          "arc_color": "#d40f0f",
+                          "arc_width": 30,
                           "arc_rounded": false,
-                          "arc_opa": 150
+                          "arc_opa": 255
                         }
                       },
                       "MAIN": {
@@ -399,17 +466,23 @@
                         "DEFAULT": {
                           "text_font": "DIGITA_32",
                           "length": 50,
-                          "text_letter_space": 8
+                          "text_letter_space": 8,
+                          "text_color": "#07090c",
+                          "line_color": "#07090c",
+                          "line_width": 3
                         }
                       },
                       "ITEMS": {
                         "DEFAULT": {
-                          "length": 35
+                          "length": 35,
+                          "line_color": "#07090c",
+                          "line_width": 2
                         }
                       },
                       "MAIN": {
                         "DEFAULT": {
-                          "arc_opa": 0
+                          "arc_opa": 0,
+                          "line_color": "#07090c"
                         }
                       }
                     }
@@ -462,7 +535,8 @@
                       "MAIN": {
                         "DEFAULT": {
                           "text_font": "DIGITAL_92",
-                          "text_align": "CENTER"
+                          "text_align": "CENTER",
+                          "text_color": "#07090c"
                         }
                       }
                     }
@@ -516,18 +590,18 @@
                       "MAIN": {
                         "DEFAULT": {
                           "arc_opa": 0,
-                          "pad_top": 4,
-                          "pad_bottom": 4,
-                          "pad_left": 4,
-                          "pad_right": 4
+                          "pad_top": 0,
+                          "pad_bottom": 0,
+                          "pad_left": 0,
+                          "pad_right": 0
                         }
                       },
                       "INDICATOR": {
                         "DEFAULT": {
-                          "arc_opa": 150,
-                          "arc_rounded": false,
-                          "arc_width": 40,
-                          "arc_color": "#37b7ff"
+                          "arc_opa": 255,
+                          "arc_rounded": true,
+                          "arc_width": 30,
+                          "arc_color": "#0047c2"
                         }
                       },
                       "KNOB": {
@@ -690,7 +764,8 @@
                       "MAIN": {
                         "DEFAULT": {
                           "text_font": "MONTSERRAT_14",
-                          "text_align": "CENTER"
+                          "text_align": "CENTER",
+                          "text_color": "#2b333b"
                         }
                       }
                     }
@@ -758,7 +833,8 @@
                   "MAIN": {
                     "DEFAULT": {
                       "text_font": "DIGITAL_72",
-                      "text_letter_space": 0
+                      "text_letter_space": 0,
+                      "text_color": "#2b333b"
                     }
                   }
                 }
@@ -808,7 +884,8 @@
                 "definition": {
                   "MAIN": {
                     "DEFAULT": {
-                      "text_font": "MONTSERRAT_20"
+                      "text_font": "MONTSERRAT_20",
+                      "text_color": "#2b333b"
                     }
                   }
                 }
@@ -859,7 +936,7 @@
                     "DEFAULT": {
                       "text_font": "DIGITAL_128",
                       "text_align": "RIGHT",
-                      "text_color": "#ffa816"
+                      "text_color": "#07090c"
                     }
                   }
                 }
@@ -910,7 +987,8 @@
                   "MAIN": {
                     "DEFAULT": {
                       "text_font": "DIGITAL_72",
-                      "text_align": "RIGHT"
+                      "text_align": "RIGHT",
+                      "text_color": "#2b333b"
                     }
                   }
                 }
@@ -960,7 +1038,8 @@
                 "definition": {
                   "MAIN": {
                     "DEFAULT": {
-                      "text_font": "MONTSERRAT_20"
+                      "text_font": "MONTSERRAT_20",
+                      "text_color": "#2b333b"
                     }
                   }
                 }
@@ -1017,6 +1096,422 @@
               "zoom": 256,
               "angle": 0,
               "innerAlign": "CENTER"
+            },
+            {
+              "objID": "b6e26b21-c50c-4c69-8bf8-7ea4b5fa63cf",
+              "type": "LVGLLabelWidget",
+              "left": 36,
+              "top": 84,
+              "width": 205,
+              "height": 28,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "8631ee16-9cd4-4ee3-9858-79a2546372f6",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "content",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "literal",
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "1659c4ba-02e6-40b9-bd3b-0912e90200b5",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "text_font": "MONTSERRAT_20",
+                      "text_align": "LEFT",
+                      "text_color": "#07090c"
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "text": "gps_status_text",
+              "textType": "expression",
+              "longMode": "WRAP",
+              "recolor": false,
+              "previewValue": "GPS: 3D fix"
+            },
+            {
+              "objID": "fdc17bac-575b-443c-b8bc-d647a6739251",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 88,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "c4f22607-8e19-4e3b-881f-2d607e42206a",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "cd92d5e9-29d8-4f29-a4e7-a6d68d73c5a7",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#12963a",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_gps_ok"
+            },
+            {
+              "objID": "2a711cd3-c76e-4bda-afc3-338d62819391",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 88,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "9ecf0312-4eed-4e92-ba38-9e5dcdf1ca59",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "ee2aa8d3-b6a1-4baa-beb4-93b5552cc74f",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#f2a100",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_gps_busy"
+            },
+            {
+              "objID": "d050507d-02a9-4244-8a61-040b4097922b",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 88,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "bfd70489-c882-42a3-8b3c-9daadee71cde",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "965dba2c-497b-440b-a09a-becc871cb15b",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#d40f0f",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_gps_error"
+            },
+            {
+              "objID": "c632c933-719a-45e2-883d-1b2f7edf9b76",
+              "type": "LVGLLabelWidget",
+              "left": 36,
+              "top": 116,
+              "width": 205,
+              "height": 28,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "ecdecde4-248b-405d-9928-e4ff175ded58",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "content",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "literal",
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "a7427222-6426-4fe5-ba23-d33728ff782c",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "text_font": "MONTSERRAT_20",
+                      "text_align": "LEFT",
+                      "text_color": "#07090c"
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "text": "usb_status_text",
+              "textType": "expression",
+              "longMode": "WRAP",
+              "recolor": false,
+              "previewValue": "USB: logging"
+            },
+            {
+              "objID": "34677594-01c5-47c4-8cc3-e535db2a3c62",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 120,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "36a38c2f-78c3-4fe9-bee1-d73fde1f4051",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "764d35ac-2319-40dd-a9b1-14eef13cd695",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#12963a",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_usb_ok"
+            },
+            {
+              "objID": "9bd484e6-9ba8-429a-a3ef-eb1f80a1eade",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 120,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "4e6918e2-5476-4ba2-96b8-84691e945b8c",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "febfea9b-4b85-4e3a-a69a-7d23ff8d3663",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#f2a100",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_usb_busy"
+            },
+            {
+              "objID": "29e43cc8-7c84-4f7a-8ddc-8ae0cd944770",
+              "type": "LVGLContainerWidget",
+              "left": 10,
+              "top": 120,
+              "width": 20,
+              "height": 20,
+              "customInputs": [],
+              "customOutputs": [],
+              "style": {
+                "objID": "c1831026-90c4-484b-8bc0-f240b37968dc",
+                "useStyle": "default",
+                "conditionalStyles": [],
+                "childStyles": []
+              },
+              "timeline": [],
+              "eventHandlers": [],
+              "leftUnit": "px",
+              "topUnit": "px",
+              "widthUnit": "px",
+              "heightUnit": "px",
+              "children": [],
+              "widgetFlags": "CLICK_FOCUSABLE|GESTURE_BUBBLE|PRESS_LOCK|SCROLLABLE|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_WITH_ARROW|SNAPPABLE",
+              "hiddenFlagType": "expression",
+              "clickableFlag": true,
+              "clickableFlagType": "literal",
+              "flagScrollbarMode": "",
+              "flagScrollDirection": "",
+              "scrollSnapX": "",
+              "scrollSnapY": "",
+              "checkedStateType": "literal",
+              "disabledStateType": "literal",
+              "states": "",
+              "localStyles": {
+                "objID": "9ce6e994-240f-4c9e-8e89-daac11703ff0",
+                "definition": {
+                  "MAIN": {
+                    "DEFAULT": {
+                      "bg_color": "#d40f0f",
+                      "bg_opa": 255,
+                      "radius": 100,
+                      "border_width": 2,
+                      "border_color": "#07090c",
+                      "border_opa": 255
+                    }
+                  }
+                }
+              },
+              "group": "",
+              "groupIndex": 0,
+              "hiddenFlag": "hide_usb_error"
             }
           ],
           "widgetFlags": "CLICKABLE|PRESS_LOCK|CLICK_FOCUSABLE|GESTURE_BUBBLE|SNAPPABLE|SCROLLABLE|SCROLL_ELASTIC|SCROLL_MOMENTUM|SCROLL_CHAIN_HOR|SCROLL_CHAIN_VER",
@@ -1028,7 +1523,15 @@
           "disabledStateType": "literal",
           "states": "",
           "localStyles": {
-            "objID": "8eb86917-c831-b762-5685-8d01972e8a22"
+            "objID": "8eb86917-c831-b762-5685-8d01972e8a22",
+            "definition": {
+              "MAIN": {
+                "DEFAULT": {
+                  "bg_color": "#f6f7f3",
+                  "bg_opa": 255
+                }
+              }
+            }
           },
           "groupIndex": 0
         }
@@ -1072,7 +1575,7 @@
       "ascent": 56,
       "descent": 15,
       "glyphs": [],
-      "lvglRanges": "48-57,58,46",
+      "lvglRanges": "48-57,58,46,45",
       "lvglSymbols": "",
       "lvglBinFile": "MAAAAGhlYWQBAAAAAwBIADMAAAAyAPL/BwAAADMAAAAQAAAAAAQGBgcAAAAFAAAALAAAAGNtYXABAAAAHAAAAC4AAAANAAEADQAAAAAAAQIDBAUGBwgJCgsAAAAoAAAAbG9jYQ0AAAAIAAgAPgDyAxYFyghkDKkPKhOAFsUZeR0TIQAAxCEAAGdseWYoIAUUAADMAAAAE/8gAAEf/+4AEf///sCf////5L/////mE////wABf//0AAAb/2AAAAO2AABUABLmAAAAAAvf//////////////5gAAAAACWf///////////////6AAAAAD2l3//////////////2eEAAAAn/af/////////////wv/gAAAD//u93d3d3d3d3d3drH/9gAAAT//4AAAAAAAAAAAAA3//wAAABn/+gAAAAAAAAAAAAEf/+wAAAHf/2AAAAAAAAAAAAAV//5gAAA///AAAAAAAAAAAAABv//iAAAJ//6gAAAAAAAAAAAAH//8AAAA3//kAAAAAAAAAAAAA///gAAAE//+AAAAAAAAAAAAAH//8gAAAZ//oAAAAAAAAAAAAA3//uAAAB3/9AAAAAAAAAAAAAEf/+gAAAP//wAAAAAAAAAAAAAV//5AAACf/+oAAAAAAAAAAAABn//gAAAN//5AAAAAAAAAAAAAHf/6AAABP//gAAAAAAAAAAAAA///QAAAGf/6AAAAAAAAAAAAAH//8AAAAd//QAAAAAAAAAAAAAv//sAAAD//7gAAAAAAAAAAAAD//+YAAAf//qAAAAAAAAAAAAAV//4gAAAZ/+QAAAAAAAAAAAABP/9gAAAAO6YAAAAAAAAAAAAAAZ8gAAAAAEIAAAAAAAAAAAAAAAKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvGAAAAAAAAAAAAAAAOoAAAABP/wgAAAAAAAAAAAAAT/mAAAAH//wAAAAAAAAAAAAAP//wgAAA//+4AAAAAAAAAAAABX//gAAAJ//6AAAAAAAAAAAAAG//6AAAA3//kAAAAAAAAAAAAAf//YAAAE//+AAAAAAAAAAAAAF//8AAAAZ//oAAAAAAAAAAAAAv//sAAAB3/9gAAAAAAAAAAAAEf/+YAAAP//wAAAAAAAAAAAAAV//4AAACf/+wAAAAAAAAAAAABv//AAAAN//6AAAAAAAAAAAAAH//2AAABP//iAAAAAAAAAAAAB///AAAAF//+AAAAAAAAAAAAAL//7AAAAd//gAAAAAAAAAAAABH//mAAAD//9AAAAAAAAAAAAAF//+IAAAf//wAAAAAAAAAAAAAb//wAAADf/+oAAAAAAAAAAAAB//9gAAAR//5gAAAAAAAAAAAAf//yAAABf/+gAAAAAAAAAAAAB//+wAAAHf9lf////////////rH/5gAAAZ8Fv/////////////5X/iAAAAan3//////////////6OKAAAAAD////////////////8AAAAAAAD///////////////8gAAAAAABUyCZgAAAAAAVkAAAAAJ34AAAAEf/2AAAA3//yAAABH//sAAABX//oAAABv//iAAAB///AAAAD//+AAAAH//9AAAAN//7gAAAR//6gAAAV//5AAAAZ//4AAAAd//oAAAA///YAAAB///AAAAC//+wAAAD//+YAAAFf/+IAAAE//2AAAAAZ8gAAAAACwAAAAAAAAAAAAAAOoAAAAAEf5gAAAA///CAAABX//gAAABv//AAAAB//9gAAAF//8AAAAL//7AAAAR//5gAAAV//4AAAAb//wAAAAf//YAAAB///AAAAC//+wAAAEf/+YAAAF//+IAAAG//8AAAAH//2AAAAf//yAAAAf//sAAAAEf/mAAAAAX/iAAAAABjAAAAAAAAAAAAAVAAS5gAAAAAL3//////////////+YAAAAAABn///////////////+gAAAAAAA9//////////////9lQgAAAAAAn/////////////8H32AAAAAAAPd3d3d3d3d3d3at//YAAAAAAAAAAAAAAAAAAAAL//8gAAAAAAAAAAAAAAAAAAABH//sAAAAAAAAAAAAAAAAAAAAFf/+gAAAAAAAAAAAAAAAAAAAAb//4gAAAAAAAAAAAAAAAAAAAB///gAAAAAAAAAAAAAAAAAAAAP//4AAAAAAAAAAAAAAAAAAAAB///QAAAAAAAAAAAAAAAAAAAAL//7gAAAAAAAAAAAAAAAAAAABH//qAAAAAAAAAAAAAAAAAAAAFf/+QAAAAAAAAAAAAAAAAAAAAZ//4AAAAAAAAAAAAAAAAAAAAB3/+gAAAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAAAAB///AAAAAAAAAAAAAAAAAAAAAL//7AAAAAAAAAAAAAAAAAAAAA///mAAAAAAAAAAAAAAAAAAAAE//+IAAAAAAAAAAAAAAAAAAAAV//gAAAAAABH////////////8e/QAAAAAADn/////////////+m4AAAAAABH//////////////+4AAAAAALx3//////////////AAAAAAAT/8N////////////+4AAAAAAB//8AAAAAAAAAAAAAAAAAAAAAP//uAAAAAAAAAAAAAAAAAAAACf/+gAAAAAAAAAAAAAAAAAAAAN//5AAAAAAAAAAAAAAAAAAAABP//gAAAAAAAAAAAAAAAAAAAAGf/6AAAAAAAAAAAAAAAAAAAAAd//YAAAAAAAAAAAAAAAAAAAAD//8AAAAAAAAAAAAAAAAAAAAAn//sAAAAAAAAAAAAAAAAAAAADf/+gAAAAAAAAAAAAAAAAAAAAT//4gAAAAAAAAAAAAAAAAAAABf//gAAAAAAAAAAAAAAAAAAAAHf/4AAAAAAAAAAAAAAAAAAAAA///QAAAAAAAAAAAAAAAAAAAAH//8AAAAAAAAAAAAAAAAAAAAA3//qAAAAAAAAAAAAAAAAAAAAEf/+YAAAAAAAAAAAAAAAAAAAAX//oAAAAAAAAAAAAAAAAAAAAB3/ZX////////////6gAAAAAAGfBb/////////////+QAAAAAAGp9//////////////+gAAAAAAA/////////////////AAAAAAAA////////////////IAAAAAAAVAgSZgAAAAC9///////////////mAAAAAAGf///////////////6AAAAAAA9//////////////9lQgAAAAAJ//////////////B99gAAAAAA93d3d3d3d3d3dq3/9gAAAAAAAAAAAAAAAAAAAL//8gAAAAAAAAAAAAAAAAAAAR//7AAAAAAAAAAAAAAAAAAAAV//6AAAAAAAAAAAAAAAAAAAAb//4gAAAAAAAAAAAAAAAAAAAf//4AAAAAAAAAAAAAAAAAAAA///gAAAAAAAAAAAAAAAAAAAB///QAAAAAAAAAAAAAAAAAAAC//+4AAAAAAAAAAAAAAAAAAAEf/+oAAAAAAAAAAAAAAAAAAAFf/+QAAAAAAAAAAAAAAAAAAAGf/+AAAAAAAAAAAAAAAAAAAAHf/6AAAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAAAAf//wAAAAAAAAAAAAAAAAAAAAv//sAAAAAAAAAAAAAAAAAAAA///mAAAAAAAAAAAAAAAAAAABP//iAAAAAAAAAAAAAAAAAAABX/+AAAAAABH////////////8e/QAAAAAA5//////////////puAAAAAAEf//////////////7gAAAAAAAX//////////////DIAAAAAAABf////////////u/+QAAAAAAAAAAAAAAAAAAAAN//wgAAAAAAAAAAAAAAAAAAAV//4AAAAAAAAAAAAAAAAAAAAb//wAAAAAAAAAAAAAAAAAAAAf//YAAAAAAAAAAAAAAAAAAABf//AAAAAAAAAAAAAAAAAAAAC//+wAAAAAAAAAAAAAAAAAAAD//+YAAAAAAAAAAAAAAAAAAAFf/+IAAAAAAAAAAAAAAAAAAAG//8AAAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAAAAX//yAAAAAAAAAAAAAAAAAAAAv//sAAAAAAAAAAAAAAAAAAABH//mAAAAAAAAAAAAAAAAAAABf//iAAAAAAAAAAAAAAAAAAABv//AAAAAAAAAAAAAAAAAAAAB//9gAAAAAAAAAAAAAAAAAAAH//8gAAAAAAAAAAAAAAAAAAAH//7AAAAAABf////////////rH/5gAAAABb/////////////+V/4gAAAAff//////////////o4oAAAAD////////////////8AAAAAAA////////////////IAAAAAAFQYMWIAAAIAAAAAAAAAAAAAAAAAAAABmAAAAAAAAAAAAAAAAAMiAAn/IAAAAAAAAAAAAAAAW/YADf/qAAAAAAAAAAAAAAv/9gAT//4AAAAAAAAAAAAAv//yABf//AAAAAAAAAAAAAEf/+wAHf/2AAAAAAAAAAAAAV//6AA///AAAAAAAAAAAAABn//iAH//7AAAAAAAAAAAAAH//+AA3//mAAAAAAAAAAAAA///gAE//+AAAAAAAAAAAAAH//9AAX//oAAAAAAAAAAAAAv//uAB3/9gAAAAAAAAAAAAD//+oAP//wAAAAAAAAAAAAAV//5AB//+oAAAAAAAAAAAABn//gAN//5gAAAAAAAAAAAAHf/6ABP//gAAAAAAAAAAAAAf//YAF//6AAAAAAAAAAAAAH//8AAd//QAAAAAAAAAAAAAv//sAB//8AAAAAAAAAAAAAD//+YAf//qAAAAAAAAAAAAAT//4gA7/+QAAAAAAAAAAAABX/+gAAXcj/////////////p79iAAAGd//////////////6cAAAAAE///////////////7gAAAAABf/////////////8KYAAAAAAZ////////////7t/EAAAAAAAAAAAAAAAAAAAL//oAAAAAAAAAAAAAAAAAABX//iAAAAAAAAAAAAAAAAAAGf/8AAAAAAAAAAAAAAAAAAAf//YAAAAAAAAAAAAAAAAAAF//8gAAAAAAAAAAAAAAAAAAv//sAAAAAAAAAAAAAAAAAAD//+YAAAAAAAAAAAAAAAAAAV//4gAAAAAAAAAAAAAAAAABv//AAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAABf//IAAAAAAAAAAAAAAAAAAL//7AAAAAAAAAAAAAAAAAABH//oAAAAAAAAAAAAAAAAAAFf/+IAAAAAAAAAAAAAAAAAAb//wAAAAAAAAAAAAAAAAAAB//+AAAAAAAAAAAAAAAAAAAX//yAAAAAAAAAAAAAAAAAACf/+wAAAAAAAAAAAAAAAAAABX/6AAAAAAAAAAAAAAAAAAAAZ/iAAAAAAAAAAAAAAAAAAAAPQAAAAAAAAAAAAAAAAAAAAAAAAAAAFQIEeYAAAAAvf//////////////5gAAAAJZ////////////////oAAAA9pd//////////////9iAAAAn/af/////////////wAAAAAP/+73d3d3d3d3d3d2oAAAAAE//+AAAAAAAAAAAAAAAAAAABn/+gAAAAAAAAAAAAAAAAAAAd//YAAAAAAAAAAAAAAAAAAAP//wAAAAAAAAAAAAAAAAAAAJ//6gAAAAAAAAAAAAAAAAAADf/+YAAAAAAAAAAAAAAAAAABP//gAAAAAAAAAAAAAAAAAAAZ//oAAAAAAAAAAAAAAAAAAAHf/0AAAAAAAAAAAAAAAAAAAD//8AAAAAAAAAAAAAAAAAAAB//+oAAAAAAAAAAAAAAAAAAA3//kAAAAAAAAAAAAAAAAAAAT//4AAAAAAAAAAAAAAAAAAAF//6AAAAAAAAAAAAAAAAAAAB3/9AAAAAAAAAAAAAAAAAAAA///AAAAAAAAAAAAAAAAAAAAf//qAAAAAAAAAAAAAAAAAAABv/5AAAAAAAAAAAAAAAAAAAAF3JH////////////8QAAAAAAGef/////////////6IAAAAAAR///////////////uAAAAAAAX//////////////DIAAAAAAAX////////////7v/kAAAAAAAAAAAAAAAAAAAA3//CAAAAAAAAAAAAAAAAAAAV//4AAAAAAAAAAAAAAAAAAAG//8AAAAAAAAAAAAAAAAAAAB//9gAAAAAAAAAAAAAAAAAABf//AAAAAAAAAAAAAAAAAAAAv//sAAAAAAAAAAAAAAAAAAAP//5gAAAAAAAAAAAAAAAAAAFf/+IAAAAAAAAAAAAAAAAAABv//AAAAAAAAAAAAAAAAAAAAf//YAAAAAAAAAAAAAAAAAAAX//yAAAAAAAAAAAAAAAAAAAL//7AAAAAAAAAAAAAAAAAAAEf/+YAAAAAAAAAAAAAAAAAABf//iAAAAAAAAAAAAAAAAAAAb//wAAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAAAH//8gAAAAAAAAAAAAAAAAAAB//+wAAAAAF////////////+sf/mAAAABb/////////////+V/4gAAAH3//////////////6OKAAAAP////////////////wAAAAAA////////////////IAAAAAAFQAEWQAAAAAIAAAAAAAAAAAAAAAAAAAADuAAAAAAAAAAAAAAAAAAAAAn/IAAAAAAAAAAAAAAAAAAADf/sAAAAAAAAAAAAAAAAAAAT//4AAAAAAAAAAAAAAAAAABn//AAAAAAAAAAAAAAAAAAAHf/2AAAAAAAAAAAAAAAAAAA///AAAAAAAAAAAAAAAAAAAJ//6gAAAAAAAAAAAAAAAAAA3//mAAAAAAAAAAAAAAAAAAE//+AAAAAAAAAAAAAAAAAAAX//oAAAAAAAAAAAAAAAAAAB3/9gAAAAAAAAAAAAAAAAAAP//wAAAAAAAAAAAAAAAAAAB//+oAAAAAAAAAAAAAAAAAAN//5AAAAAAAAAAAAAAAAAABP//gAAAAAAAAAAAAAAAAAAF//6AAAAAAAAAAAAAAAAAAAd//QAAAAAAAAAAAAAAAAAAD//8AAAAAAAAAAAAAAAAAAAf//qAAAAAAAAAAAAAAAAAAAb/+QAAAAAAAAAAAAAAAAAAAXckf////////////xAAAAAAGef/////////////6IAAAAAEf//////////////7gAAAAvHf/////////////8MgAABP/w3////////////7v/kAAH//wAAAAAAAAAAAAAN//wgA//+4AAAAAAAAAAAABX//gAJ//6AAAAAAAAAAAAAG//8AA3//kAAAAAAAAAAAAAf//YAE//+AAAAAAAAAAAAAF//8AAZ//oAAAAAAAAAAAAAv//sAB3/9gAAAAAAAAAAAAD//+YAP//wAAAAAAAAAAAAAV//4gCf/+wAAAAAAAAAAAABv//AAN//6AAAAAAAAAAAAAH//2ABP//iAAAAAAAAAAAABf//IAF//+AAAAAAAAAAAAAL//7AAd//gAAAAAAAAAAAABH//mAD//9AAAAAAAAAAAAAF//+IAf//wAAAAAAAAAAAAAb//wADf/+oAAAAAAAAAAAAB//9gAR//5gAAAAAAAAAAAAf//yABf/+gAAAAAAAAAAAAB//+wAHf9lf////////////rH/5gAZ8Fv/////////////5X/iAAan3//////////////6OKAAAD////////////////8AAAAAD///////////////8gAAAAVBhRYgAAAL3//////////////+YAAAAln///////////////+gAAA9pd//////////////9nhAAJ/2n/////////////8L/4AA//7vd3d3d3d3d3d3ax//YAE//+AAAAAAAAAAAAAN//8AAZ//oAAAAAAAAAAAABH//sAB3/9gAAAAAAAAAAAAFf/+YAP//wAAAAAAAAAAAAAb//4gCf/+oAAAAAAAAAAAAB///AAN//5AAAAAAAAAAAAAP//4ABP//gAAAAAAAAAAAAB///IAGf/6AAAAAAAAAAAAAN//7gAd//QAAAAAAAAAAAABH//oAD//8AAAAAAAAAAAAAFf/+QAn//qAAAAAAAAAAAAAZ//4ADf/+QAAAAAAAAAAAAB3/+gAT//4AAAAAAAAAAAAAP//0ABn/+gAAAAAAAAAAAAB///AAHf/0AAAAAAAAAAAAAL//7AA//+4AAAAAAAAAAAAA///mAH//6gAAAAAAAAAAAAFf/+IAGf/iAAAAAAAAAAAAAT//YAADukAAAAAAAAAAAAAAGfIAAABAAAAAAAAAAAAAAAACoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADqAAAAAAAAAAAAAAAAAAAAE/5gAAAAAAAAAAAAAAAAAAD//8IAAAAAAAAAAAAAAAAAAV//4AAAAAAAAAAAAAAAAAABv/+gAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAABf//AAAAAAAAAAAAAAAAAAAL//7AAAAAAAAAAAAAAAAAABH//mAAAAAAAAAAAAAAAAAAFf/+AAAAAAAAAAAAAAAAAAAb//wAAAAAAAAAAAAAAAAAAB//9gAAAAAAAAAAAAAAAAAAf//wAAAAAAAAAAAAAAAAAAC//+wAAAAAAAAAAAAAAAAAAR//5gAAAAAAAAAAAAAAAAABf//iAAAAAAAAAAAAAAAAAAG//8AAAAAAAAAAAAAAAAAAAf//YAAAAAAAAAAAAAAAAAAH//8gAAAAAAAAAAAAAAAAAAf//sAAAAAAAAAAAAAAAAAAAR/+YAAAAAAAAAAAAAAAAAAAF/4gAAAAAAAAAAAAAAAAAAABigAAAAVAAS5gAAAAAL3//////////////+YAAAAAAln///////////////+gAAAAA9pd//////////////9lQgAAAJ/2n/////////////8H32AAAA//7vd3d3d3d3d3d3at//YAAAE//+AAAAAAAAAAAAAL//8gAAAZ//oAAAAAAAAAAAABH//sAAAB3/9gAAAAAAAAAAAAFf/+gAAAP//wAAAAAAAAAAAAAb//4gAACf/+oAAAAAAAAAAAAB///gAAAN//5gAAAAAAAAAAAAP//4AAABP//gAAAAAAAAAAAAB///QAAAGf/6AAAAAAAAAAAAAL//7gAAAd//QAAAAAAAAAAAABH//qAAAD//8AAAAAAAAAAAAAFf/+QAAAf//qAAAAAAAAAAAAAZ//4AAADf/+QAAAAAAAAAAAAB3/+gAAAT//4AAAAAAAAAAAAAH//2AAABf/+gAAAAAAAAAAAAB///AAAAHf/0AAAAAAAAAAAAAL//7AAAA///AAAAAAAAAAAAAA///mAAAH//6gAAAAAAAAAAAAE//+IAAAG//kAAAAAAAAAAAAAV//gAAAAF3JH////////////8e/QAAAAABnn/////////////+m4AAAAAABH//////////////+4AAAAAALx3//////////////DIAAAAAT/8N////////////+7/5AAAAB//8AAAAAAAAAAAAADf/8IAAAP//uAAAAAAAAAAAAAV//4AAACf/+gAAAAAAAAAAAABv//AAAAN//5AAAAAAAAAAAAAH//2AAABP//gAAAAAAAAAAAABf//AAAAGf/6AAAAAAAAAAAAAL//7AAAAd//YAAAAAAAAAAAAA///mAAAD//8AAAAAAAAAAAAAFf/+IAAAn//sAAAAAAAAAAAAAb//wAAADf/+gAAAAAAAAAAAAB//9gAAAT//4gAAAAAAAAAAAAX//yAAABf//gAAAAAAAAAAAAC//+wAAAHf/4AAAAAAAAAAAAAR//5gAAA///QAAAAAAAAAAAABf//iAAAH//8AAAAAAAAAAAAAG//8AAAA3//qAAAAAAAAAAAAAf//YAAAEf/+YAAAAAAAAAAAAH//8gAAAX//oAAAAAAAAAAAAAf//sAAAB3/ZX////////////6x/+YAAAGfBb/////////////+V/4gAAAGp9//////////////+jigAAAAA/////////////////AAAAAAAA////////////////IAAAAAAAVAgSZgAAAAC9///////////////mAAAAACWf///////////////6AAAAA9pd//////////////9lQgAACf9p//////////////B99gAAD//u93d3d3d3d3d3dq3/9gAAE//+AAAAAAAAAAAAAL//8gAAGf/6AAAAAAAAAAAAAR//7AAAHf/2AAAAAAAAAAAAAV//6AAAP//wAAAAAAAAAAAAAb//4gAAn//qAAAAAAAAAAAAAf//4AAA3//mAAAAAAAAAAAAA///gAABP//gAAAAAAAAAAAAB///QAABn/+gAAAAAAAAAAAAC//+4AAB3/9AAAAAAAAAAAAAEf/+oAAD//8AAAAAAAAAAAAAFf/+QAAH//6gAAAAAAAAAAAAGf/+AAAN//5AAAAAAAAAAAAAHf/6AAAT//4AAAAAAAAAAAAAH//2AAAX//oAAAAAAAAAAAAAf//wAAAd//QAAAAAAAAAAAAAv//sAAA///AAAAAAAAAAAAAA///mAAB//+oAAAAAAAAAAAABP//iAAAb/+QAAAAAAAAAAAABX/+AAAAF3JH////////////8e/QAAAAAZ5//////////////puAAAAAAEf//////////////7gAAAAAAAX//////////////DIAAAAAAABf////////////u/+QAAAAAAAAAAAAAAAAAAAAN//wgAAAAAAAAAAAAAAAAAAAV//4AAAAAAAAAAAAAAAAAAAAb//wAAAAAAAAAAAAAAAAAAAAf//YAAAAAAAAAAAAAAAAAAABf//AAAAAAAAAAAAAAAAAAAAC//+wAAAAAAAAAAAAAAAAAAAD//+YAAAAAAAAAAAAAAAAAAAFf/+IAAAAAAAAAAAAAAAAAAAG//8AAAAAAAAAAAAAAAAAAAAH//2AAAAAAAAAAAAAAAAAAAAX//yAAAAAAAAAAAAAAAAAAAAv//sAAAAAAAAAAAAAAAAAAABH//mAAAAAAAAAAAAAAAAAAABf//iAAAAAAAAAAAAAAAAAAABv//AAAAAAAAAAAAAAAAAAAAB//9gAAAAAAAAAAAAAAAAAAAH//8gAAAAAAAAAAAAAAAAAAAH//7AAAAAABf////////////rH/5gAAAABb/////////////+V/4gAAAAff//////////////o4oAAAAD////////////////8AAAAAAA////////////////IAAAAAACggBUQABbggAAA7/6IAA7//+AAb////gN/////oX////8IJ///+YADf/+gAABH+oAAAAMoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMwAAAAT/yAAAR//7gAR///+wJ/////kv////+YT////AAF///QAABv/YAAAA7YAAAAAAA==",
       "lvglGlyphs": {
