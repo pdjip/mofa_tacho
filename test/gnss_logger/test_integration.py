@@ -8,10 +8,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 GNSS = (ROOT / "src/gnss_service.cpp").read_text(encoding="utf-8")
+IO_DIAG = (ROOT / "src/usb_io_diag.h").read_text(encoding="utf-8")
+HEAP_CPP = (ROOT / "src/heap_diag.cpp").read_text(encoding="utf-8")
+HEAP_HEADER = (ROOT / "src/heap_diag.h").read_text(encoding="utf-8")
 BASE = "2673b4559fcc56c4f883bb2d2d4791dec234ae77"
 
-def original(path):
-    return subprocess.check_output(["git", "show", BASE + ":" + path], cwd=ROOT).decode("utf-8")
+def original(path, revision=BASE):
+    return subprocess.check_output(["git", "show", revision + ":" + path], cwd=ROOT).decode("utf-8")
 
 def function(source, name):
     match = re.search(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*\{", source)
@@ -47,7 +50,14 @@ class SourceContracts(unittest.TestCase):
         for name in ["pvtUtc", "verifyRate", "setupGPS", "invalidate", "publish", "startGnss", "readGnssSnapshot"]:
             self.assertEqual(function(GNSS, name), function(old_gnss, name), name)
         for name in ["displayTask", "sensorTask", "rpmISR", "rpmSensorTask", "microsToRPM"]:
-            self.assertEqual(function(MAIN, name), function(original("src/main.cpp"), name), name)
+            current = function(MAIN, name)
+            if name == "displayTask":
+                # Authorized display-only diagnostic is the sole addition;
+                # compare every remaining byte against the original task.
+                self.assertEqual(current.count("display_rotation::reportErrors();"), 1)
+                self.assertIn("sleep_ms = lv_task_handler();\n    display_rotation::reportErrors();", current)
+                current = current.replace("    display_rotation::reportErrors();\n", "")
+            self.assertEqual(current, function(original("src/main.cpp"), name), name)
 
     def test_legacy_schema_and_measurement_expressions(self):
         previous = original("src/main.cpp")
@@ -59,7 +69,26 @@ class SourceContracts(unittest.TestCase):
             self.assertEqual(compact(re.search(pattern, MAIN, re.S)[1]),
                              compact(re.search(pattern, previous, re.S)[1]))
         self.assertNotIn('fopen(path, "w', MAIN)
-        self.assertIn('if (info.st_size != 0) return mediumUnchanged();', function(MAIN, "ensureLegacyHeader"))
+        headers = function(MAIN, "ensureLegacyHeader")
+        self.assertIn("if (result == 0 && info.st_size != 0)", headers)
+        existing = headers[headers.index("if (result == 0 && info.st_size != 0)"):
+                           headers.index("} else if (result != 0 && error != ENOENT)")]
+        self.assertIn("event.mediumOk = mediumUnchanged();", existing)
+        self.assertIn("return event.mediumOk;", existing)
+        self.assertNotIn("gnss_log::writeFile", existing)
+        self.assertIn("return ioOk && mediumOk;", headers)
+        for branch in ["ExistingNonempty", "StatError", "HeaderWrite", "MediumChanged"]:
+            self.assertIn("usb_io_diag::Context::" + branch, headers)
+        self.assertIn("event.hasStat = result == 0;", headers)
+        self.assertIn("event.fileSize = info.st_size;", headers)
+        self.assertIn("event.fileType = info.st_mode & S_IFMT;", headers)
+        self.assertIn("usbIoFirst.event.fileSize = event.fileSize;", headers)
+        self.assertIn("usbIoFirst.event.fileType = event.fileType;", headers)
+        self.assertRegex(headers, r"const int result = stat\(path, &info\);\s*const int error = errno;")
+        stat_error = headers[headers.index("} else if (result != 0 && error != ENOENT)"):
+                             headers.index('FileOps io(path, "a",')]
+        self.assertIn("return false;", stat_error)
+        self.assertNotIn("gnss_log::writeFile", stat_error)
 
     def test_additive_versioned_format_and_original_units(self):
         header = literal(MAIN, "GNSS_HEADER").splitlines()
@@ -71,6 +100,19 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("if (r.altitudeValid)", formatter)
         self.assertNotIn("logClock", formatter)
         self.assertIn("record.utcMs = int64_t(current.utcSeconds) * 1000 + current.utcNanoseconds / 1000000;", GNSS)
+        self.assertIn("decimalUnsigned(sequence, sizeof(sequence), r.sequence)", formatter)
+        self.assertIn("decimalSigned(utc, sizeof(utc), r.utcMs)", formatter)
+        record_format = ast.literal_eval(re.search(
+            r'const int n = snprintf\(gnssLine, sizeof\(gnssLine\),\s*("[^"\n]+")', formatter)[1])
+        self.assertEqual(record_format.rstrip("\n").split("\t"),
+                         ["%s"] + ["%lu"] * 5 + ["%s"] + ["%u"] * 4 + ["%s"] * 6)
+        self.assertIn("char utc[24] = {}, lat[16] = {}, lon[16] = {}, alt[16] = {};", formatter)
+        self.assertIn("char speed[16] = {}, course[16] = {}, accuracy[16] = {};", formatter)
+        self.assertIn("n >= 0 && size_t(n) < sizeof(gnssLine) ? gnssLine : nullptr", formatter)
+        # All 17 columns at maximum decimal widths still fit the bounded line.
+        widths = [20] + [10] * 5 + [20] + [3] * 4 + [11] * 5 + [10]
+        self.assertLess(sum(widths) + 16 + 1, 384)
+        self.assertNotRegex(MAIN, r'%[-+ #0-9.*]*(?:ll|j)[diuoxX]')
 
     def test_callbacks_only_publish_atomic_events(self):
         self.assertEqual(compact(function(MAIN, "usbAttachHandler")), "{usbAttachedFlag.store(true);}")
@@ -79,6 +121,30 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("ATOMIC_BOOL_LOCK_FREE == 2 && ATOMIC_INT_LOCK_FREE == 2", MAIN)
         self.assertIn("usbDetachGeneration.load() == mountedGeneration", function(MAIN, "mediumUnchanged"))
         self.assertNotIn("msd.connect", function(MAIN, "setup"))
+        setup = function(MAIN, "setup")
+        self.assertLess(setup.index("ui_init();"), setup.index("heap_diag::initialize();"))
+        for start in ["displayThread.start", "sensorThread.start", "loggingThread.start", "rpmSensorThread.start", "startGnss()"]:
+            self.assertLess(setup.index("heap_diag::initialize();"), setup.index(start))
+        initialize = function(HEAP_CPP, "initialize")
+        self.assertLess(initialize.index("mbed_mem_trace_lock();"),
+                        initialize.index("mbed_mem_trace_set_callback(allocationTrace);"))
+        self.assertLess(initialize.index("mbed_mem_trace_set_callback(allocationTrace);"),
+                        initialize.index("mbed_mem_trace_unlock();"))
+        callback = re.sub(r"//[^\n]*", "", function(HEAP_CPP, "allocationTrace"))
+        for forbidden in [r"\bSerial\b", r"\bmillis\s*\(", r"\breadStats\s*\(",
+                          r"\bmbed_stats_heap_get\s*\(", r"\b(?:malloc|calloc|realloc|free|new|delete)\b",
+                          r"\b(?:lock|unlock|sleep_for|snprintf|printSnapshot)\s*\("]:
+            self.assertNotRegex(callback, forbidden)
+        self.assertIn("if (result || operation == MBED_MEM_TRACE_FREE) return;", callback)
+        self.assertIn("if (!failure.count || !failure.size)", callback)
+        for operation in ["MALLOC", "REALLOC", "CALLOC"]:
+            self.assertIn("MBED_MEM_TRACE_" + operation, callback)
+        self.assertIn("const uint32_t head = failureHead.load(std::memory_order_relaxed)", callback)
+        self.assertIn("failureTail.load(std::memory_order_acquire)", callback)
+        self.assertLess(callback.index("failures[head % FAILURES] = failure;"),
+                        callback.index("failureHead.store(head + 1, std::memory_order_release);"))
+        self.assertIn("if (lost != UINT32_MAX) failureLost.store(lost + 1, std::memory_order_relaxed);", callback)
+        self.assertIn("ATOMIC_INT_LOCK_FREE == 2", HEAP_CPP)
 
     def test_mount_gate_exclusive_names_and_recovery(self):
         mount = function(MAIN, "mountUSB")
@@ -106,7 +172,10 @@ class SourceContracts(unittest.TestCase):
             self.assertLess(logger.index(legacy_gate), logger.index(call))
             self.assertLess(logger.index(call), logger.index("reserveGnssLog("))
         self.assertIn("completeGnssLog(gnssWork[0].sequence, count, ok)", logger)
-        self.assertIn("}) && mediumUnchanged();", logger)
+        self.assertIn("const bool mediumOk = mediumUnchanged();", logger)
+        self.assertIn("const bool ok = ioOk && mediumOk;", logger)
+        self.assertLess(logger.index("const bool mediumOk = mediumUnchanged();"),
+                        logger.index("completeGnssLog("))
         self.assertIn("failed = !completed || !mediumUnchanged();", logger)
         self.assertRegex(logger, r"if \(!ok\) \{\s*gnssPath\[0\] = 0;")
         self.assertRegex(logger, r"if \(!reportGnssStats\(toFile\)\) \{\s*gnssPath\[0\] = 0;[^\n]*\n\s*failed = !mediumUnchanged\(\);")
@@ -120,13 +189,14 @@ class SourceContracts(unittest.TestCase):
         self.assertLess(logger.index("sensorBuffer[sensorBufCount++]"), logger.index("safeFileWrite(FILE_SENSOR_PATH"))
         # A mount failure cannot publish mounted=true or reach header/write gates.
         mount_success, mount_error = mount.split("} else {", 1)
-        self.assertIn("usbMountedFlag.store(true)", mount_success)
+        self.assertIn("usbMountedFlag.store(usbMount.usable)", mount_success)
         self.assertNotIn("usbMountedFlag.store(true)", mount_error)
         self.assertIn("usbFaultFlag.store(true)", mount_error)
-        self.assertIn("usbMountedFlag.load() && (unmountPending || !mediumUnchanged())", logger)
-        self.assertIn("!usbMountedFlag.load() && uint32_t(now - lastMount) >= 1000", logger)
-        self.assertIn("unmountPending = code != 0;", function(MAIN, "unmountUSB"))
-        self.assertIn("usbMountedFlag.store(unmountPending)", function(MAIN, "unmountUSB"))
+        self.assertIn("usbMount.cleanupDue(now, mediumUnchanged())", logger)
+        self.assertIn("usbMount.mountDue(now, lastMount)", logger)
+        self.assertIn("usbMount.cleaned(code);", function(MAIN, "unmountUSB"))
+        self.assertIn("unmountPending = usbMount.pending;", function(MAIN, "unmountUSB"))
+        self.assertIn("usbMountedFlag.store(false)", function(MAIN, "unmountUSB"))
         # Checked legacy failures still set shared failure and suppress SENSOR.
         for path, count in [("FILE_RPM_PATH", "rpmBufCount"), ("FILE_SENSOR_PATH", "sensorBufCount")]:
             block = logger[logger.index("const bool ok = safeFileWrite(" + path):]
@@ -139,8 +209,43 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("headersReady = false;", shared_recovery)
         checked_legacy = function(MAIN, "safeFileWrite")
         self.assertIn("gnss_log::writeFile", checked_legacy)
-        self.assertIn("return ok && mediumUnchanged();", checked_legacy)
+        self.assertIn("const bool mediumOk = mediumUnchanged();", checked_legacy)
+        self.assertIn("return ok && mediumOk;", checked_legacy)
         self.assertRegex(logger, r"if \(failed\) \{\s*usbFaultFlag.store\(true\);")
+        # Instrumentation may observe these operations but adds no I/O attempts.
+        for expression in [r"\bfopen\(", r"\bfwrite\(", r"\bfflush\(", r"\bfclose\(",
+                           r"\bstat\(", r"\bfdopen\(", r"::open\(", r"::close\(",
+                           r"fs\.mount\(", r"fs\.unmount\(", r"msd\.connect\("]:
+            self.assertEqual(len(re.findall(expression, MAIN)),
+                             len(re.findall(expression, original("src/main.cpp", "7b85488"))), expression)
+        for name, call in [("mountUSB", "fs.mount(&msd)"), ("unmountUSB", "fs.unmount()")]:
+            body = function(MAIN, name)
+            self.assertIn(f"const int code = {call};\n  const int error = errno;", body)
+            self.assertLess(body.index("event.after = usbIoState()"), body.index("usbIoReport(event)"))
+            self.assertIn("errno = error;", body)
+            self.assertLess(body.index("const int error = errno;"), body.index("heap_diag::ioError("))
+        opened = function(MAIN, "open")
+        self.assertLess(opened.index("heap_diag::beforeOpen(p)"), opened.index("fopen(p, m)"))
+        failed_open = opened[opened.index("if (!file)"):opened.index("errno = error;")]
+        self.assertIn("heap_diag::openFailed(heapToken, p, error);", failed_open)
+        self.assertNotIn("afterClose", failed_open)
+        closed = function(MAIN, "close")
+        self.assertLess(closed.index("fclose(f)"), closed.index("heap_diag::afterClose(heapToken, path)"))
+        self.assertLess(closed.index("const int error = errno;"), closed.index("heap_diag::afterClose("))
+        self.assertLess(segment.index("heap_diag::beforeOpen(gnssPath)"), segment.index("::open("))
+        self.assertLess(segment.index("::close(fd)"), segment.index("heap_diag::afterClose(io.heapToken, gnssPath)"))
+        self.assertIn("heap_diag::openFailed(io.heapToken, gnssPath, openError)", segment)
+        mount = function(MAIN, "mountUSB")
+        self.assertLess(mount.index("heap_diag::beforeMount()"), mount.index("fs.mount(&msd)"))
+        self.assertLess(mount.index("fs.mount(&msd)"), mount.index("heap_diag::afterMount(heapToken, code == 0)"))
+        self.assertIn("heap_diag::afterUnmount(code == 0)", function(MAIN, "unmountUSB"))
+        self.assertIn("heap_diag::startRound();", logger)
+        self.assertIn("heap_diag::finishRound(!failed && headersReady && gnssPath[0] && !unmountPending &&", logger)
+        finish_round = function(HEAP_CPP, "finishRound")
+        self.assertIn("if (!baselineSet && ready && roundGood && roundClosed)", finish_round)
+        self.assertIn("roundBaseline = tokenFor(snapshot);", finish_round)
+        self.assertIn("roundClosed = true;", function(HEAP_CPP, "afterClose"))
+        self.assertIn("roundGood = roundGood && success;", function(HEAP_CPP, "operationFinished"))
 
     def test_statistics_and_partial_buffers_have_independent_deadlines(self):
         logger = function(MAIN, "loggingTask")
@@ -154,13 +259,171 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("Serial.print(gnssLine)", stats)
         self.assertIn("if (!toFile) return true;", stats)
         self.assertIn("gnssSegmentNext=%lu gnssSegmentExhausted=%u", stats)
+        for variable, field in [("accepted", "s.accepted"), ("written", "s.written"),
+                                ("overflow", "s.overflow"), ("uncertain", "s.uncertain"),
+                                ("legacy", "legacyUncertain")]:
+            self.assertIn(f"decimalUnsigned({variable}, sizeof({variable}), {field})", stats)
+        for field in ["accepted", "written", "overflow", "uncertain", "legacyUncertain"]:
+            self.assertIn(field + "=%s", stats)
+        stats_format = ast.literal_eval(re.search(
+            r'const int n = snprintf\(gnssLine, sizeof\(gnssLine\),\s*("[^"\n]+")', stats)[1])
+        stats_max = re.sub(r"%s", "18446744073709551615", stats_format)
+        stats_max = re.sub(r"%lu", "4294967295", stats_max).replace("%u", "1")
+        self.assertLess(len(stats_max), 384)
+        self.assertIn('loggerDiagnostic("stats-write", "before")', stats)
+        self.assertIn('loggerDiagnostic("stats-write", "after", ok)', stats)
+        report = function(MAIN, "usbIoReport")
+        report_format = ast.literal_eval(re.search(
+            r'snprintf\(line, sizeof\(line\),\s*("[^"\n]+")', report)[1])
+        # Longest names, owned path/mode capacities, full ARM integer ranges.
+        values = iter(["close-fd", "p" * 31, "m" * 3, "existing-nonempty", "existing-nonempty",
+                       "-2147483648", "-2147483648", "-2147483648", "after-call"] +
+                      ["4294967295"] * 4 + ["1", "-9223372036854775808", "4294967295", "1", "1"])
+        longest = re.sub(r"%lu|%ld|%[sdu]", lambda _: next(values), report_format)
+        self.assertEqual(len(longest) + 1, 328)
+        self.assertLessEqual(len(longest) + 1, 384)
+        self.assertIn("static char line[384], sizeText[21]", report)
+        self.assertIn("decimalSigned(sizeText, sizeof(sizeText), event.fileSize)", report)
+        for field in ["op", "path", "mode", "ctx", "branch", "rc", "errno", "ferror", "ferrPhase",
+                      "row", "requested", "actual", "repeat", "stat", "size", "type", "io", "medium"]:
+            self.assertIn(field + "=", report_format)
+        for field in ["attached", "mounted", "unmountPending", "fault", "detachGeneration", "mountedGeneration", "headersReady"]:
+            self.assertIn(field + "=", report)
+        self.assertIn('states("pre", event.before);', report)
+        self.assertIn('states("post", event.after);', report)
+        self.assertIn('event.streamError < 0 ? "n/a"', report)
+        self.assertIn('Operation::Close ? "pre-close" : "after-call"', report)
+        heap_stats = function(HEAP_CPP, "readStats")
+        self.assertIn("mbed_stats_heap_get(&stats);", heap_stats)
+        self.assertIn("return {stats.current_size, stats.max_size, stats.alloc_cnt, stats.alloc_fail_cnt,", heap_stats)
+        self.assertIn("stats.overhead_size, stats.reserved_size};", heap_stats)
+        for forbidden in ["mallinfo", "__malloc_free_list", "malloc_addblock", "#define MBED_"]:
+            self.assertNotIn(forbidden, HEAP_CPP + HEAP_HEADER)
+        printer = function(HEAP_CPP, "printSnapshot")
+        for field in ["current", "max", "alloc", "fail", "overhead", "reserved", "delta", "deltaAlloc", "baselineDelta"]:
+            self.assertIn(field + "=", printer)
+        for expression in ["snapshot.delta", "snapshot.allocationDelta", "roundBaseline.current"]:
+            self.assertIn(expression, printer)
+        self.assertNotRegex(HEAP_CPP, r'%[-+ #0-9.*]*(?:ll|j)[diuoxX]')
+        snapshot_format = ast.literal_eval(re.search(
+            r'snprintf\(line, sizeof\(line\),\s*("[^"\n]+")', printer)[1])
+        values = iter(["first-ENOMEM-post-cleanup", "4294967295", "first-successful-round", "p" * 31] +
+                      ["4294967295"] * 7 + ["-9223372036854775808"] * 2 +
+                      ["1", "-9223372036854775808", "-2147483648"])
+        longest_snapshot = re.sub(r"%lu|%[sdu]", lambda _: next(values), snapshot_format)
+        self.assertLessEqual(len(longest_snapshot) + 1, 384)
+        pending = function(HEAP_CPP, "reportPending")
+        allocation_format = ast.literal_eval(re.search(
+            r'snprintf\(line, sizeof\(line\),\s*("[^"\n]+")', pending)[1])
+        values = iter(["255", "18446744073709551615", "4294967295", "4294967295", "ffffffff", "4294967295"])
+        longest_allocation = re.sub(r"%lu|%lx|%[su]", lambda _: next(values), allocation_format)
+        self.assertLessEqual(len(longest_allocation) + 1, 384)
+        self.assertIn("char line[384]", HEAP_CPP)
+        after_close = function(HEAP_CPP, "afterClose")
+        self.assertIn("printedPairs < 2 || uint32_t(now - lastPairPrint) >= 30000", after_close)
+        self.assertIn("recent.at(i).id == token.id && recent.at(i).point == Point::BeforeOpen", after_close)
+        for name in ["afterMount", "afterUnmount"]:
+            self.assertIn("printed < 2 || uint32_t(now - last) >= 5000", function(HEAP_CPP, name))
+        self.assertIn("if (printed && uint32_t(now - last) < 5000) return;", pending)
+        self.assertIn("tail != head && n < FAILURES", pending)
 
     def test_fifo_lock_regions_do_not_include_io_or_snapshot_lock(self):
         self.assertEqual(GNSS.count("gnss_log::Fifo logFifo;"), 1)
         for region in re.findall(r"fifoMutex.lock\(\);(.*?)fifoMutex.unlock\(\);", GNSS, re.S):
-            for forbidden in ["snapshotMutex", "Serial", "fopen", "snprintf", "sleep_for"]:
+            for forbidden in ["snapshotMutex", "Serial", "fopen", "snprintf", "sleep_for", "loggerDiagnostic", "heap_diag"]:
                 self.assertNotIn(forbidden, region)
         self.assertNotIn("logFifo =", GNSS)
+        diagnostic = function(MAIN, "loggerDiagnostic")
+        self.assertIn("[LOGGER DIAG]", diagnostic)
+        for api in ["stack_size", "free_stack", "max_stack"]:
+            self.assertIn("loggingThread." + api + "()", diagnostic)
+        trace = MAIN[MAIN.index("struct LoggerTrace"):MAIN.index("void loggerDiagnostic")]
+        self.assertIn("initial < 6", trace)
+        self.assertIn("uint32_t(now - last) >= 5000", trace)
+        for name, operation in [("createGnssSegment", "segment"), ("mountUSB", "mount"),
+                                ("unmountUSB", "unmount")]:
+            body = function(MAIN, name)
+            self.assertIn(f'loggerDiagnostic("{operation}", "before"', body)
+            self.assertIn('"after"', body)
+        for name in ["safeFileWrite", "ensureLegacyHeader"]:
+            body = function(MAIN, name)
+            self.assertIn("trace.sample()", body)
+            self.assertIn("before-", body)
+            self.assertIn("after-", body)
+        logger = function(MAIN, "loggingTask")
+        for operation in ["fifo-reserve", "gnss-block"]:
+            self.assertIn(f'loggerDiagnostic("{operation}", "before"', logger)
+            self.assertIn(f'loggerDiagnostic("{operation}", "after"', logger)
+        self.assertLess(logger.index('loggerDiagnostic("fifo-reserve", "before")'), logger.index("reserveGnssLog("))
+        self.assertLess(logger.index("reserveGnssLog("), logger.index('loggerDiagnostic("fifo-reserve", "after"'))
+        self.assertIn("diagnosticHeadersReady = &headersReady;", logger)
+        state = function(MAIN, "usbIoState")
+        for expression in ["usbAttachedFlag.load()", "usbMountedFlag.load()", "unmountPending",
+                           "usbFaultFlag.load()", "diagnosticHeadersReady && *diagnosticHeadersReady",
+                           "usbDetachGeneration.load()", "mountedGeneration"]:
+            self.assertIn(expression, state)
+        for name in ["usbIoReport", "loggerDiagnostic", "capture", "finish"]:
+            self.assertIn("PreserveErrno preserve;", function(MAIN, name))
+        self.assertIn("int saved = errno;", MAIN)
+        self.assertIn("~PreserveErrno() { errno = saved; }", MAIN)
+        for name, call in [("open", "const Handle file = fopen(p, m);"),
+                           ("write", "const size_t actual = fwrite(data, 1, size, f);"),
+                           ("flush", "const int result = fflush(f);"),
+                           ("close", "const int result = fclose(f);")]:
+            body = function(MAIN, name)
+            self.assertIn(call + "\n    const int error = errno;", body)
+            self.assertIn("errno = error;", body)
+        for name in ["write", "flush"]:
+            body = function(MAIN, name)
+            self.assertLess(body.index("const int error = errno;"), body.index("ferror(f)"))
+            self.assertLess(body.index("ferror(f)"), body.index("capture("))
+        writer = function(MAIN, "write")
+        self.assertLess(writer.index("capture("), writer.index("++row;"))
+        self.assertIn("return actual == size && !streamError;", writer)
+        closer = function(MAIN, "close")
+        self.assertLess(closer.index("ferror(f)"), closer.index("fclose(f)"))
+        after_close = re.sub(r"//[^\n]*", "", closer[closer.index("fclose(f)") + len("fclose(f)"):])
+        self.assertNotRegex(after_close, r"\bf\b")
+        self.assertIn("return result == 0;", closer)
+        self.assertIn("usbIoFirst.reset();", MAIN)
+        finish = function(MAIN, "finish")
+        self.assertIn("if (!mediumOk && !usbIoFirst.valid)", finish)
+        self.assertIn("usbIoFirst.event.after = usbIoState();", finish)
+        self.assertNotIn("usbIoFirst.event.before =", finish)
+        self.assertIn("usb_io_diag::copy(event.path, path)", function(MAIN, "capture"))
+        self.assertIn("if (entry.count != UINT32_MAX) ++entry.count;", IO_DIAG)
+        self.assertIn("static constexpr size_t SLOTS = 8;", IO_DIAG)
+        segment = function(MAIN, "createGnssSegment")
+        self.assertRegex(segment, r"const int fd = ::open\([^;]+;\s*const int openError = errno;")
+        self.assertRegex(segment, r'FILE \*file = fdopen\(fd, "w"\);\s*const int fdopenError = errno;')
+        self.assertRegex(segment, r"const int closeResult = ::close\(fd\);\s*const int closeError = errno;")
+        self.assertIn("if (openError != EEXIST)", segment)
+        capture = function(MAIN, "capture")
+        self.assertIn("heap_diag::ioError(path, operation == usb_io_diag::Operation::Medium ? 0 : error, heapToken)", capture)
+        self.assertIn("heap_diag::reportPending();", function(MAIN, "finish"))
+        errors = function(HEAP_CPP, "ioError")
+        self.assertIn("if (!errorFrozen)", errors)
+        self.assertIn("if (error == ENOMEM && !enomemFrozen)", errors)
+        self.assertLess(errors.index("capture(Point::IoError"), errors.index("firstError = recent;"))
+        self.assertLess(errors.index("capture(Point::Enomem"), errors.index("firstEnomem = recent;"))
+        self.assertNotIn("print", errors)
+        pending = function(HEAP_CPP, "reportPending")
+        for group in ["first-error", "first-ENOMEM"]:
+            self.assertIn(group + "-frozen", pending)
+            self.assertIn(group + "-post-cleanup", pending)
+        self.assertIn("capture(Point::AfterErrorCleanup", pending)
+        self.assertNotIn("firstError.push", HEAP_CPP)
+        self.assertNotIn("firstEnomem.push", HEAP_CPP)
+        self.assertIn("failureHead.load(std::memory_order_acquire)", pending)
+        self.assertLess(pending.index("const AllocationFailure failure = failures[tail % FAILURES];"),
+                        pending.index("failureTail.store(tail + 1, std::memory_order_release);"))
+        self.assertIn("uint64_t(failure.count) * failure.size", pending)
+        self.assertIn("callerReliable=0", pending)
+        self.assertIn("constexpr size_t HISTORY = 8, FAILURES = 8;", HEAP_CPP)
+        heap_capture = HEAP_CPP[HEAP_CPP.index("Snapshot capture("):HEAP_CPP.index("Token tokenFor(")]
+        self.assertIn("PreserveErrno preserve;", heap_capture)
+        self.assertIn("i + 1 < sizeof(snapshot.path)", heap_capture)
+        self.assertIn("snapshot.path[i] = '\\0';", heap_capture)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

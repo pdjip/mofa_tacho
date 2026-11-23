@@ -32,6 +32,10 @@
 #include "rpm_display_filter.h"
 #include "gnss_service.h"
 #include "log_clock.h"
+#include "usb_io_diag.h"
+#include "usb_mount_state.h"
+#include "heap_diag.h"
+#include "display_rotation.h"
 
 #include "ui/ui.h"
 #include "ui/vars.h"
@@ -75,6 +79,7 @@ static_assert(ATOMIC_BOOL_LOCK_FREE == 2 && ATOMIC_INT_LOCK_FREE == 2,
               "USB callbacks require lock-free atomics");
 uint32_t mountedGeneration = 0; // Logger-owned below.
 bool unmountPending = false;
+usb_mount::State usbMount;
 char gnssPath[32] = {};
 uint32_t nextGnssSegment = 0;
 GnssLogRecord gnssWork[gnss_log::BLOCK]; // Not on the 4-KiB logger stack.
@@ -159,7 +164,7 @@ void setup()
   sensors_DS.begin();
 
   // initialisieren des Displays
-  Display.begin();
+  if (Display.begin() == 0) display_rotation::install();
   TouchDetector.begin();
   // Display.begin() already ran lv_init(). Its own tick thread advances time in
   // 16 ms steps plus delay jitter; millis() is exact and takes precedence.
@@ -174,6 +179,7 @@ void setup()
   msd.attach_removed_callback(usbDetachHandler);
   // The logger alone calls connect/mount/unmount and filesystem operations.
 
+  heap_diag::initialize(); // Peripheral/UI init is complete; USB/logger not started.
   displayThread.start(displayTask);
   sensorThread.start(sensorTask);
   loggingThread.start(loggingTask);
@@ -202,13 +208,188 @@ void usbDetachHandler()
   usbDetachGeneration.fetch_add(1);
 }
 
+// Diagnostic ownership is the logger's; the pointer observes its original
+// local header gate without moving or changing the recovery state machine.
+const bool *diagnosticHeadersReady = nullptr;
+usb_io_diag::FirstFailure usbIoFirst;
+usb_io_diag::Repeats usbIoRepeats;
+
+struct PreserveErrno {
+  int saved = errno;
+  ~PreserveErrno() { errno = saved; }
+};
+
+usb_io_diag::State usbIoState()
+{
+  return {usbAttachedFlag.load(), usbMountedFlag.load(), unmountPending,
+          usbFaultFlag.load(), diagnosticHeadersReady && *diagnosticHeadersReady,
+          usbDetachGeneration.load(), mountedGeneration};
+}
+
+const char *usbIoOperation(usb_io_diag::Operation operation)
+{
+  static const char *const names[] = {"fopen", "fwrite", "fflush", "fclose", "stat",
+      "open", "fdopen", "close-fd", "mount", "unmount", "medium", "header"};
+  return names[static_cast<unsigned>(operation)];
+}
+
+const char *usbIoContext(usb_io_diag::Context context)
+{
+  static const char *const names[] = {"file", "stat-error", "existing-nonempty",
+      "header-write", "medium-changed", "mount", "unmount"};
+  return names[static_cast<unsigned>(context)];
+}
+
+void usbIoReport(const usb_io_diag::Event &event)
+{
+  PreserveErrno preserve;
+  uint32_t repeats = 0;
+  if (!usbIoRepeats.emit(event, millis(), repeats)) return;
+  static char line[384], sizeText[21];
+  gnss_log::decimalSigned(sizeText, sizeof(sizeText), event.fileSize);
+  snprintf(line, sizeof(line),
+      "[USB IO DIAG] op=%s path=%s mode=%s ctx=%s branch=%s rc=%ld errno=%d ferror=%d ferrPhase=%s row=%lu requested=%lu actual=%lu repeat=%lu stat=%u size=%s type=%lu io=%u medium=%u\n",
+      usbIoOperation(event.operation), event.path, event.mode, usbIoContext(event.context), usbIoContext(event.branch),
+      event.result, event.error, event.streamError,
+      event.streamError < 0 ? "n/a" : (event.operation == usb_io_diag::Operation::Close ? "pre-close" : "after-call"),
+      (unsigned long)event.row,
+      (unsigned long)event.requested, (unsigned long)event.actual, (unsigned long)repeats,
+      unsigned(event.hasStat), sizeText, (unsigned long)event.fileType,
+      unsigned(event.ioOk), unsigned(event.mediumOk));
+  Serial.print(line);
+  snprintf(line, sizeof(line), "[USB IO DIAG] suppressed=%lu classSuppressed=%lu registered=%u\n",
+      (unsigned long)usbIoRepeats.suppressed, (unsigned long)usbIoRepeats.classSuppressed,
+      unsigned(usbMount.registered));
+  Serial.print(line);
+  const auto states = [&](const char *phase, const usb_io_diag::State &s) {
+    snprintf(line, sizeof(line),
+        "[USB IO DIAG] %s attached=%u mounted=%u unmountPending=%u fault=%u detachGeneration=%lu mountedGeneration=%lu headersReady=%u\n",
+        phase, unsigned(s.attached), unsigned(s.mounted), unsigned(s.pending), unsigned(s.fault),
+        (unsigned long)s.detached, (unsigned long)s.mountedGeneration, unsigned(s.headers));
+    Serial.print(line);
+  };
+  states("pre", event.before);
+  states("post", event.after);
+}
+
 struct FileOps {
   using Handle = FILE *;
-  Handle open(const char *path, const char *mode) { return fopen(path, mode); }
-  bool write(Handle f, const char *data, size_t size) { return fwrite(data, 1, size, f) == size && !ferror(f); }
-  bool flush(Handle f) { return fflush(f) == 0 && !ferror(f); }
-  bool close(Handle f) { return fclose(f) == 0; }
+  const char *path;
+  const char *mode;
+  usb_io_diag::Context context;
+  size_t row = 0;
+  heap_diag::Token heapToken;
+  FileOps(const char *p, const char *m, usb_io_diag::Context c = usb_io_diag::Context::File)
+      : path(p), mode(m), context(c) { usbIoFirst.reset(); }
+  void capture(usb_io_diag::Operation operation, long result, int error,
+               int streamError = -1, size_t requested = 0, size_t actual = 0) {
+    PreserveErrno preserve;
+    usb_io_diag::Event event;
+    event.operation = operation;
+    event.context = context;
+    event.branch = context;
+    usb_io_diag::copy(event.path, path);
+    usb_io_diag::copy(event.mode, mode);
+    event.result = result; event.error = error; event.streamError = streamError;
+    event.requested = requested; event.actual = actual; event.row = row;
+    event.before = event.after = usbIoState();
+    usbIoFirst.capture(event);
+    heap_diag::ioError(path, operation == usb_io_diag::Operation::Medium ? 0 : error, heapToken);
+  }
+  Handle open(const char *p, const char *m) {
+    heapToken = heap_diag::beforeOpen(p);
+    const Handle file = fopen(p, m);
+    const int error = errno;
+    if (!file) {
+      capture(usb_io_diag::Operation::Open, 0, error);
+      heap_diag::openFailed(heapToken, p, error);
+    }
+    errno = error;
+    return file;
+  }
+  bool write(Handle f, const char *data, size_t size) {
+    const size_t actual = fwrite(data, 1, size, f);
+    const int error = errno;
+    const int streamError = ferror(f);
+    if (actual != size || streamError)
+      capture(usb_io_diag::Operation::Write, static_cast<long>(actual), error, streamError, size, actual);
+    ++row;
+    errno = error;
+    return actual == size && !streamError;
+  }
+  bool flush(Handle f) {
+    const int result = fflush(f);
+    const int error = errno;
+    const int streamError = ferror(f);
+    if (result || streamError) capture(usb_io_diag::Operation::Flush, result, error, streamError);
+    errno = error;
+    return result == 0 && !streamError;
+  }
+  bool close(Handle f) {
+    const int beforeCloseError = errno;
+    const int streamError = ferror(f); // Valid pre-close status, never post-close.
+    errno = beforeCloseError;
+    const int result = fclose(f);
+    const int error = errno;
+    if (result) capture(usb_io_diag::Operation::Close, result, error, streamError);
+    heap_diag::afterClose(heapToken, path);
+    errno = error; // Never inspect f after fclose, including a failed close.
+    return result == 0;
+  }
+  void finish(bool ioOk, bool mediumOk) {
+    PreserveErrno preserve;
+    heap_diag::operationFinished(ioOk && mediumOk);
+    if (!mediumOk && !usbIoFirst.valid) {
+      capture(usb_io_diag::Operation::Medium, ioOk, errno);
+      usbIoFirst.event.context = usb_io_diag::Context::MediumChanged;
+    }
+    if (usbIoFirst.valid) {
+      // Keep the failure-time snapshot; the post state shows cleanup completion.
+      usbIoFirst.event.after = usbIoState();
+      usbIoFirst.event.ioOk = ioOk;
+      usbIoFirst.event.mediumOk = mediumOk;
+      usbIoReport(usbIoFirst.event);
+    }
+    heap_diag::reportPending(); // All cleanup has returned, no library locks held.
+  }
 };
+
+// Logger-thread only. Trace the first six calls of each operation, then one
+// paired sample per five seconds. A blocked call therefore leaves a before
+// marker. No callback, ISR or FIFO-mutex region calls this instrumentation.
+struct LoggerTrace {
+  unsigned initial = 0;
+  uint32_t last = 0;
+  bool sample() {
+#ifndef MOFA_VERBOSE_LOGGER_TRACE
+#define MOFA_VERBOSE_LOGGER_TRACE 0
+#endif
+    if (!MOFA_VERBOSE_LOGGER_TRACE) return false;
+    const uint32_t now = millis();
+    if (initial < 6 || uint32_t(now - last) >= 5000) {
+      if (initial < 6) ++initial;
+      last = now;
+      return true;
+    }
+    return false;
+  }
+};
+
+void loggerDiagnostic(const char *operation, const char *phase, long result = 0)
+{
+  PreserveErrno preserve;
+  // Mbed Thread.h exposes these byte counts. max_stack is a watermark,
+  // free_stack a current/saved-SP estimate, not a bound on the next I/O call.
+  const uint32_t size = loggingThread.stack_size();
+  const uint32_t free = loggingThread.free_stack();
+  const uint32_t peak = loggingThread.max_stack();
+  static char line[160]; // Single logger owner; keep diagnostics off its stack.
+  snprintf(line, sizeof(line),
+      "[LOGGER DIAG] %s %s result=%ld stack=%lu free=%lu peak=%lu reserve=%lu\n",
+      operation, phase, result, (unsigned long)size, (unsigned long)free,
+      (unsigned long)peak, (unsigned long)(peak <= size ? size - peak : 0));
+  Serial.print(line);
+}
 
 bool mediumUnchanged()
 {
@@ -219,85 +400,218 @@ bool mediumUnchanged()
 // the stream is closed before unmount, and that operation is never confirmed.
 bool safeFileWrite(const char *path, String lines[], uint8_t count)
 {
-  FileOps io;
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic(path, "before-write", count);
+  FileOps io(path, "a");
   const bool ok = gnss_log::writeFile(io, path, "a", count,
       [&](size_t i) { return lines[i].c_str(); });
-  return ok && mediumUnchanged();
+  if (diagnostic) loggerDiagnostic(path, "after-write", ok);
+  const bool mediumOk = mediumUnchanged();
+  io.finish(ok, mediumOk);
+  return ok && mediumOk;
 }
 
 bool ensureLegacyHeader(const char *path, const char *header)
 {
-  struct stat info;
-  if (stat(path, &info) == 0) {
-    if (info.st_size != 0) return mediumUnchanged();
-  } else if (errno != ENOENT) {
-    return false;
-  }
-  FileOps io;
-  return gnss_log::writeFile(io, path, "a", 1,
-      [&](size_t) { return header; }) && mediumUnchanged();
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic(path, "before-header");
+  // Preserve the original stat branch and errno gate. A missing file is an
+  // ordinary header-write path, not an I/O failure.
+  const bool ok = [&]() {
+    struct stat info;
+    const int result = stat(path, &info);
+    const int error = errno;
+    usb_io_diag::Event event;
+    event.operation = usb_io_diag::Operation::Stat;
+    usb_io_diag::copy(event.path, path);
+    usb_io_diag::copy(event.mode, "a");
+    event.result = result; event.error = error;
+    event.before = event.after = usbIoState();
+    event.hasStat = result == 0;
+    if (event.hasStat) { event.fileSize = info.st_size; event.fileType = info.st_mode & S_IFMT; }
+    if (result == 0 && info.st_size != 0) {
+      event.context = usb_io_diag::Context::ExistingNonempty;
+      event.branch = event.context;
+      event.ioOk = true; event.mediumOk = mediumUnchanged();
+      if (!event.mediumOk) event.context = usb_io_diag::Context::MediumChanged;
+      usbIoReport(event);
+      errno = error;
+      return event.mediumOk;
+    } else if (result != 0 && error != ENOENT) {
+      event.context = usb_io_diag::Context::StatError;
+      event.branch = event.context;
+      event.mediumOk = mediumUnchanged();
+      heap_diag::ioError(path, error);
+      usbIoReport(event);
+      heap_diag::reportPending();
+      errno = error;
+      return false;
+    }
+    FileOps io(path, "a", usb_io_diag::Context::HeaderWrite);
+    errno = error;
+    const bool ioOk = gnss_log::writeFile(io, path, "a", 1,
+        [&](size_t) { return header; });
+    const bool mediumOk = mediumUnchanged();
+    if (!mediumOk && !usbIoFirst.valid) {
+      io.capture(usb_io_diag::Operation::Medium, ioOk, errno);
+      usbIoFirst.event.context = usb_io_diag::Context::MediumChanged;
+    }
+    if (usbIoFirst.valid) {
+      usbIoFirst.event.hasStat = event.hasStat;
+      usbIoFirst.event.fileSize = event.fileSize;
+      usbIoFirst.event.fileType = event.fileType;
+    }
+    io.finish(ioOk, mediumOk);
+    if (ioOk && mediumOk) {
+      event.context = usb_io_diag::Context::HeaderWrite;
+      event.branch = event.context;
+      event.ioOk = true; event.mediumOk = true;
+      event.after = usbIoState();
+      usbIoReport(event);
+    }
+    return ioOk && mediumOk;
+  }();
+  if (diagnostic) loggerDiagnostic(path, "after-header", ok);
+  return ok;
 }
 
 // Bounded name search: at most 32 candidates per logger round, 10000 per boot.
 // O_EXCL avoids overwriting any existing segment, including one from a reboot.
 gnss_log::SegmentResult createGnssSegment()
 {
-  return gnss_log::findSegment(nextGnssSegment, [&](uint32_t index) {
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic("segment", "before", nextGnssSegment);
+  const auto result = gnss_log::findSegment(nextGnssSegment, [&](uint32_t index) {
     snprintf(gnssPath, sizeof(gnssPath), "/usb/GN%06lu.tsv", (unsigned long)index);
+    FileOps io(gnssPath, "w");
+    io.heapToken = heap_diag::beforeOpen(gnssPath);
     const int fd = ::open(gnssPath, O_WRONLY | O_CREAT | O_EXCL, 0666);
+    const int openError = errno;
     if (fd < 0) {
+      if (openError != EEXIST) {
+        io.capture(usb_io_diag::Operation::ExclusiveOpen, fd, openError);
+        heap_diag::openFailed(io.heapToken, gnssPath, openError);
+        io.finish(false, mediumUnchanged());
+      }
+      if (openError == EEXIST) heap_diag::openFailed(io.heapToken, gnssPath, openError);
       gnssPath[0] = 0;
+      errno = openError;
       if (errno == EEXIST) return gnss_log::SegmentResult::Exists;
       return gnss_log::SegmentResult::IoError;
     }
     FILE *file = fdopen(fd, "w");
-    if (!file) { ::close(fd); gnssPath[0] = 0; return gnss_log::SegmentResult::IoError; }
-    FileOps io;
+    const int fdopenError = errno;
+    if (!file) {
+      io.capture(usb_io_diag::Operation::Fdopen, 0, fdopenError);
+      const int closeResult = ::close(fd);
+      const int closeError = errno;
+      if (closeResult) io.capture(usb_io_diag::Operation::Fdclose, closeResult, closeError);
+      heap_diag::afterClose(io.heapToken, gnssPath);
+      io.finish(false, mediumUnchanged());
+      gnssPath[0] = 0;
+      errno = closeError;
+      return gnss_log::SegmentResult::IoError;
+    }
     const bool ok = gnss_log::writeOpened(io, file, 1, [&](size_t) { return GNSS_HEADER; });
-    if (ok && mediumUnchanged()) return gnss_log::SegmentResult::Ready;
+    const bool mediumOk = mediumUnchanged();
+    io.finish(ok, mediumOk);
+    if (ok && mediumOk) return gnss_log::SegmentResult::Ready;
     gnssPath[0] = 0;
     return gnss_log::SegmentResult::IoError;
   });
+  if (diagnostic) loggerDiagnostic("segment", "after", static_cast<long>(result));
+  return result;
 }
 
 void mountUSB()
 {
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic("mount", "before");
   // One bounded attempt per second; no busy retry loop in the logger.
   const uint32_t generation = usbDetachGeneration.load();
-  if (!msd.connect()) return;
+  if (!msd.connect()) {
+    if (diagnostic) loggerDiagnostic("mount", "connect-unavailable", -1);
+    return;
+  }
   usbAttachedFlag.store(true);
+  const auto before = usbIoState();
+  const heap_diag::Token heapToken = heap_diag::beforeMount();
+  usbMount.begin();
   const int code = fs.mount(&msd);
+  const int error = errno;
+  if (code) heap_diag::ioError("/usb", code < 0 ? -code : 0);
+  heap_diag::afterMount(heapToken, code == 0);
+  if (diagnostic) loggerDiagnostic("mount", code ? "error" : "after", code);
+  mountedGeneration = generation;
+  usbMount.mounted(code == 0, mediumUnchanged());
+  unmountPending = usbMount.pending;
   if (code == 0) {
     mountedGeneration = generation;
-    usbMountedFlag.store(true);
+    usbMountedFlag.store(usbMount.usable);
     usbFaultFlag.store(!mediumUnchanged());
     Serial.println("USB mounted; existing files preserved");
   } else {
     usbFaultFlag.store(true);
-    Serial.print("USB mount error: ");
-    Serial.println(code);
+    static usb_io_diag::Event event;
+    event.operation = usb_io_diag::Operation::Mount;
+    event.context = usb_io_diag::Context::Mount;
+    event.branch = event.context;
+    usb_io_diag::copy(event.path, "/usb");
+    event.result = code; event.error = error;
+    event.before = before; event.after = usbIoState();
+    event.mediumOk = mediumUnchanged();
+    usbIoReport(event); // Raw Mbed return code is authoritative, errno a snapshot.
+    heap_diag::reportPending();
   }
+  errno = error;
 }
 
 void unmountUSB()
 {
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic("unmount", "before");
   // Invoked only by loggingTask, after every open stream has been closed.
+  const auto before = usbIoState();
+  usbMount.lastCleanup = millis();
   const int code = fs.unmount();
-  unmountPending = code != 0;
-  usbMountedFlag.store(unmountPending); // No remount until unmount is resolved.
+  const int error = errno;
+  if (code) heap_diag::ioError("/usb", code < 0 ? -code : 0);
+  heap_diag::afterUnmount(code == 0);
+  if (diagnostic) loggerDiagnostic("unmount", code ? "error" : "after", code);
+  usbMount.cleaned(code);
+  unmountPending = usbMount.pending;
+  usbMountedFlag.store(false);
   gnssPath[0] = 0;
   if (code != 0) {
     usbFaultFlag.store(true);
-    Serial.print("USB unmount error: ");
-    Serial.println(code);
+    static usb_io_diag::Event event;
+    event.operation = usb_io_diag::Operation::Unmount;
+    event.context = usb_io_diag::Context::Unmount;
+    event.branch = event.context;
+    usb_io_diag::copy(event.path, "/usb");
+    event.result = code; event.error = error;
+    event.before = before; event.after = usbIoState();
+    event.mediumOk = mediumUnchanged();
+    usbIoReport(event);
+    heap_diag::reportPending();
   }
+  errno = error;
 }
 
 const char *formatGnssRecord(const GnssLogRecord &r)
 {
+  char sequence[21];
   char utc[24] = {}, lat[16] = {}, lon[16] = {}, alt[16] = {};
   char speed[16] = {}, course[16] = {}, accuracy[16] = {};
-  if (r.timeValid) snprintf(utc, sizeof(utc), "%lld", (long long)r.utcMs);
+  if (!gnss_log::decimalUnsigned(sequence, sizeof(sequence), r.sequence)) return nullptr;
+  if (r.timeValid) {
+    if (!gnss_log::decimalSigned(utc, sizeof(utc), r.utcMs)) return nullptr;
+  }
   if (r.positionValid) {
     snprintf(lat, sizeof(lat), "%ld", (long)r.latitude);
     snprintf(lon, sizeof(lon), "%ld", (long)r.longitude);
@@ -307,8 +621,8 @@ const char *formatGnssRecord(const GnssLogRecord &r)
   }
   if (r.altitudeValid) snprintf(alt, sizeof(alt), "%ld", (long)r.altitudeMslMm);
   const int n = snprintf(gnssLine, sizeof(gnssLine),
-      "%llu\t%lu\t%lu\t%lu\t%lu\t%lu\t%s\t%u\t%u\t%u\t%u\t%s\t%s\t%s\t%s\t%s\t%s\n",
-      (unsigned long long)r.sequence, (unsigned long)r.sessionId,
+      "%s\t%lu\t%lu\t%lu\t%lu\t%lu\t%s\t%u\t%u\t%u\t%u\t%s\t%s\t%s\t%s\t%s\t%s\n",
+      sequence, (unsigned long)r.sessionId,
       (unsigned long)r.sampleId, (unsigned long)r.iTowMs, (unsigned long)r.receivedMs,
       (unsigned long)r.epochDeltaMs, utc, unsigned(r.timeValid), unsigned(r.positionValid),
       unsigned(r.altitudeValid), unsigned(r.fixType), lat, lon, alt, speed, course, accuracy);
@@ -321,19 +635,32 @@ const char *formatGnssRecord(const GnssLogRecord &r)
 bool reportGnssStats(bool toFile)
 {
   const GnssLogStats s = readGnssLogStats();
+  char accepted[21], written[21], overflow[21], uncertain[21], legacy[21];
+  if (!gnss_log::decimalUnsigned(accepted, sizeof(accepted), s.accepted) ||
+      !gnss_log::decimalUnsigned(written, sizeof(written), s.written) ||
+      !gnss_log::decimalUnsigned(overflow, sizeof(overflow), s.overflow) ||
+      !gnss_log::decimalUnsigned(uncertain, sizeof(uncertain), s.uncertain) ||
+      !gnss_log::decimalUnsigned(legacy, sizeof(legacy), legacyUncertain)) return false;
   const int n = snprintf(gnssLine, sizeof(gnssLine),
-      "# STATS accepted=%llu written=%llu queued=%lu highWater=%lu overflow=%llu uncertain=%llu legacyUncertain=%llu gnssSegmentNext=%lu gnssSegmentExhausted=%u\n",
-      (unsigned long long)s.accepted, (unsigned long long)s.written,
+      "# STATS accepted=%s written=%s queued=%lu highWater=%lu overflow=%s uncertain=%s legacyUncertain=%s gnssSegmentNext=%lu gnssSegmentExhausted=%u\n",
+      accepted, written,
       (unsigned long)s.queued, (unsigned long)s.highWater,
-      (unsigned long long)s.overflow, (unsigned long long)s.uncertain,
-      (unsigned long long)legacyUncertain, (unsigned long)nextGnssSegment,
+      overflow, uncertain, legacy, (unsigned long)nextGnssSegment,
       unsigned(!gnssPath[0] && nextGnssSegment >= gnss_log::SEGMENT_LIMIT));
   if (n < 0 || size_t(n) >= sizeof(gnssLine)) return false;
   Serial.print(gnssLine);
   if (!toFile) return true;
-  FileOps io;
-  return gnss_log::writeFile(io, gnssPath, "a", 1,
-      [&](size_t) { return gnssLine; }) && mediumUnchanged();
+  static LoggerTrace trace;
+  const bool diagnostic = trace.sample();
+  if (diagnostic) loggerDiagnostic("stats-write", "before");
+  FileOps io(gnssPath, "a");
+  const bool ioOk = gnss_log::writeFile(io, gnssPath, "a", 1,
+      [&](size_t) { return gnssLine; });
+  const bool mediumOk = mediumUnchanged();
+  io.finish(ioOk, mediumOk);
+  const bool ok = ioOk && mediumOk;
+  if (diagnostic) loggerDiagnostic("stats-write", "after", ok);
+  return ok;
 }
 
 //=============================================================================
@@ -375,15 +702,17 @@ void loggingTask()
   uint32_t lastStats = millis() - 1000;
   uint32_t rpmBufferStart = 0, sensorBufferStart = 0;
   bool headersReady = false;
+  diagnosticHeadersReady = &headersReady;
 
   while (true) {
+    heap_diag::startRound();
     const uint32_t now = millis();
-    if (usbMountedFlag.load() && (unmountPending || !mediumUnchanged())) {
+    if (usbMount.cleanupDue(now, mediumUnchanged())) {
       unmountUSB();
       headersReady = false;
       if (!usbAttachedFlag.load()) usbFaultFlag.store(false);
     }
-    if (!usbMountedFlag.load() && uint32_t(now - lastMount) >= 1000) {
+    if (usbMount.mountDue(now, lastMount)) {
       lastMount = now;
       mountUSB(); // Also discovers a stick present at startup.
       headersReady = false;
@@ -484,11 +813,21 @@ void loggingTask()
       if (!failed && gnssPath[0] && mediumUnchanged()) {
         // At most 20 per 100-ms round: up to 200/s before I/O delays, so a
         // backlog can drain faster than 5 Hz while legacy work gets each turn.
+        static LoggerTrace reserveTrace, writeTrace;
+        const bool reserveDiagnostic = reserveTrace.sample();
+        if (reserveDiagnostic) loggerDiagnostic("fifo-reserve", "before");
         const size_t count = reserveGnssLog(gnssWork, gnss_log::BLOCK, millis());
+        if (reserveDiagnostic) loggerDiagnostic("fifo-reserve", "after", count);
         if (count) {
-          FileOps io;
-          const bool ok = gnss_log::writeFile(io, gnssPath, "a", count,
-              [&](size_t i) { return formatGnssRecord(gnssWork[i]); }) && mediumUnchanged();
+          const bool writeDiagnostic = writeTrace.sample();
+          if (writeDiagnostic) loggerDiagnostic("gnss-block", "before", count);
+          FileOps io(gnssPath, "a");
+          const bool ioOk = gnss_log::writeFile(io, gnssPath, "a", count,
+              [&](size_t i) { return formatGnssRecord(gnssWork[i]); });
+          const bool mediumOk = mediumUnchanged();
+          io.finish(ioOk, mediumOk);
+          const bool ok = ioOk && mediumOk;
+          if (writeDiagnostic) loggerDiagnostic("gnss-block", "after", ok);
           const bool completed = completeGnssLog(gnssWork[0].sequence, count, ok);
           if (!ok) {
             gnssPath[0] = 0; // Uncertain block is accounted once; rotate, no replay.
@@ -508,6 +847,8 @@ void loggingTask()
       headersReady = false;
       reportGnssStats(false);
     }
+    heap_diag::finishRound(!failed && headersReady && gnssPath[0] && !unmountPending &&
+        usbMountedFlag.load() && mediumUnchanged());
     rtos::ThisThread::sleep_for(milliseconds(1000 / SENSOR_LOG_HZ));
   }
 }
@@ -554,6 +895,7 @@ void displayTask()
         set_ui_self_test(ui_self_test::frame(selfTestMs));
     }
     sleep_ms = lv_task_handler();
+    display_rotation::reportErrors();
     ui_tick();
     // Refresh live values and the clock even if LVGL currently has no timers.
     // lv_task_handler() returns 0 while a timer is due; never spin without a pause.

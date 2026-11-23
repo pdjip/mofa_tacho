@@ -21,6 +21,32 @@ struct GnssLogStats {
 };
 
 namespace gnss_log {
+// No printf length-modifier dependency, no heap, and no signed negation of
+// INT64_MIN. Failure leaves an empty string whenever a destination is writable.
+constexpr bool decimalUnsigned(char *out, size_t capacity, uint64_t value) {
+    if (!out || !capacity) return false;
+    out[0] = '\0';
+    size_t digits = 1;
+    for (uint64_t rest = value; rest >= 10; rest /= 10) ++digits;
+    if (capacity <= digits) return false;
+    out[digits] = '\0';
+    do {
+        out[--digits] = char('0' + value % 10);
+        value /= 10;
+    } while (digits);
+    return true;
+}
+
+constexpr bool decimalSigned(char *out, size_t capacity, int64_t value) {
+    if (!out || !capacity) return false;
+    out[0] = '\0';
+    if (value >= 0) return decimalUnsigned(out, capacity, uint64_t(value));
+    const uint64_t magnitude = uint64_t(0) - uint64_t(value);
+    if (capacity < 2 || !decimalUnsigned(out + 1, capacity - 1, magnitude)) return false;
+    out[0] = '-';
+    return true;
+}
+
 constexpr size_t CAPACITY = 320;
 constexpr size_t BLOCK = 20;
 constexpr uint32_t PARTIAL_MS = 1000;

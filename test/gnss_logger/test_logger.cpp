@@ -1,5 +1,310 @@
 // Compile-time fault injection executes the same write policy as FileOps.
 #include "../../src/gnss_log_fifo.h"
+#include "../../src/usb_io_diag.h"
+#include "../../src/heap_diag.h"
+
+template<size_t N>
+constexpr bool heapHistoryOrdering()
+{
+    heap_diag::History<unsigned, N> history{};
+    if (history.size()) return false;
+    for (unsigned value = 0; value < 35; ++value) {
+        history.push(value);
+        const size_t count = value + 1 < N ? value + 1 : N;
+        if (history.size() != count) return false;
+        for (size_t index = 0; index < count; ++index)
+            if (history.at(index) != value + 1 - count + index) return false;
+    }
+    return true;
+}
+
+constexpr bool frozenHeapHistoryOwnsSnapshots()
+{
+    heap_diag::History<heap_diag::Snapshot, 8> recent{}, frozen{};
+    heap_diag::Snapshot snapshot{};
+    snapshot.stats = {10, 20, 3, 4, 5, 100};
+    snapshot.point = heap_diag::Point::IoError;
+    snapshot.id = 7; snapshot.ms = UINT32_MAX; snapshot.error = 12;
+    snapshot.delta = -17; snapshot.allocationDelta = -2;
+    usb_io_diag::copy(snapshot.path, "/usb/DRZ.txt");
+    recent.push(snapshot);
+    frozen = recent;
+    snapshot.path[0] = '\0';
+    snapshot.stats.current = 999;
+    for (unsigned i = 0; i < 20; ++i) { snapshot.id = i; recent.push(snapshot); }
+    const auto &saved = frozen.at(0);
+    return frozen.size() == 1 && recent.size() == 8 &&
+        usb_io_diag::equal(saved.path, "/usb/DRZ.txt") && saved.id == 7 &&
+        saved.point == heap_diag::Point::IoError && saved.ms == UINT32_MAX && saved.error == 12 &&
+        saved.stats.current == 10 && saved.stats.peak == 20 && saved.stats.allocations == 3 &&
+        saved.stats.failures == 4 && saved.stats.overhead == 5 && saved.stats.reserved == 100 &&
+        saved.delta == -17 && saved.allocationDelta == -2;
+}
+
+constexpr bool twoFrozenHeapHistoriesStaySeparate()
+{
+    heap_diag::History<unsigned, 8> recent{}, firstError{}, firstEnomem{};
+    for (unsigned i = 0; i < 8; ++i) recent.push(i);
+    firstError = recent;
+    recent.push(8);
+    firstEnomem = recent;
+    for (unsigned i = 9; i < 40; ++i) recent.push(i);
+    for (size_t i = 0; i < 8; ++i)
+        if (firstError.at(i) != i || firstEnomem.at(i) != i + 1 || recent.at(i) != i + 32)
+            return false;
+    return true;
+}
+
+static_assert(heapHistoryOrdering<8>(), "Heap history retains chronological order through full and repeated wrap");
+static_assert(heapHistoryOrdering<1>(), "Single-slot history retains only the latest snapshot");
+static_assert(frozenHeapHistoryOwnsSnapshots(), "Frozen heap snapshots retain owned path, counters and signed deltas");
+static_assert(twoFrozenHeapHistoriesStaySeparate(), "First error, first ENOMEM and live history remain independent copies");
+static_assert(heap_diag::difference(0, 0) == 0, "Equal heap observations have zero delta");
+static_assert(heap_diag::difference(UINT32_MAX, 0) == INT64_C(4294967295), "Positive heap delta spans full uint32 range");
+static_assert(heap_diag::difference(0, UINT32_MAX) == -INT64_C(4294967295), "Negative heap delta has no unsigned wrap");
+static_assert(heap_diag::difference(UINT32_C(2147483648), 0) == INT64_C(2147483648), "Positive delta exceeds signed 32 bits");
+static_assert(heap_diag::difference(0, UINT32_C(2147483648)) == -INT64_C(2147483648), "Negative delta reaches signed 32-bit boundary");
+static_assert(heap_diag::difference(UINT32_MAX, UINT32_MAX - 1) == 1, "Adjacent high counters differ by one");
+
+constexpr usb_io_diag::Event ioEvent(usb_io_diag::Operation operation = usb_io_diag::Operation::Write)
+{
+    usb_io_diag::Event event{};
+    event.operation = operation;
+    event.context = event.branch = usb_io_diag::Context::HeaderWrite;
+    usb_io_diag::copy(event.path, "/usb/DRZ.txt");
+    usb_io_diag::copy(event.mode, "a");
+    event.result = 7;
+    event.error = 5;
+    event.streamError = 1;
+    event.requested = 12;
+    event.actual = 7;
+    event.row = 3;
+    event.before = {true, true, false, false, false, 4, 4};
+    event.after = event.before;
+    return event;
+}
+
+constexpr bool firstFailureSurvivesCleanup()
+{
+    usb_io_diag::FirstFailure first{};
+    auto write = ioEvent();
+    first.capture(write);
+    auto flush = ioEvent(usb_io_diag::Operation::Flush);
+    flush.error = 28;
+    first.capture(flush);
+    auto close = ioEvent(usb_io_diag::Operation::Close);
+    close.error = 9;
+    first.capture(close);
+    if (!first.valid || first.event.operation != usb_io_diag::Operation::Write ||
+        first.event.error != 5 || first.event.row != 3 || first.event.requested != 12 ||
+        first.event.actual != 7 || first.event.before.detached != 4) return false;
+    first.event.after.fault = true; // Post-cleanup snapshot must not replace pre.
+    if (first.event.before.fault || !first.event.after.fault) return false;
+    first.reset();
+    if (first.valid) return false;
+    first.capture(close);
+    return first.valid && first.event.operation == usb_io_diag::Operation::Close &&
+        first.event.error == 9;
+}
+
+constexpr bool firstFailureOwnsPath()
+{
+    char path[] = "/usb/GN000001.tsv";
+    auto event = ioEvent();
+    usb_io_diag::copy(event.path, path);
+    usb_io_diag::FirstFailure first{};
+    first.capture(event);
+    path[0] = '\0';
+    event.path[0] = '\0';
+    return usb_io_diag::equal(first.event.path, "/usb/GN000001.tsv") &&
+        usb_io_diag::equal(first.event.mode, "a");
+}
+
+constexpr bool boundedIoCopies()
+{
+    struct Guarded { char pre = '<'; char text[5]{}; char post = '>'; } guard{};
+    usb_io_diag::copy(guard.text, "123456789");
+    if (!usb_io_diag::equal(guard.text, "1234") || guard.pre != '<' || guard.post != '>')
+        return false;
+    usb_io_diag::copy(guard.text, nullptr);
+    if (guard.text[0] != '\0') return false;
+    char one[1] = {'!'};
+    usb_io_diag::copy(one, "long");
+    return one[0] == '\0';
+}
+
+constexpr bool repeatDeadlineAndCount()
+{
+    usb_io_diag::Repeats repeats{};
+    auto event = ioEvent();
+    uint32_t count = 0;
+    if (!repeats.emit(event, 100, count) || count != 1) return false;
+    if (repeats.emit(event, 101, count) || count != 2) return false;
+    if (repeats.emit(event, 5099, count) || count != 3) return false;
+    if (!repeats.emit(event, 5100, count) || count != 4) return false;
+    return !repeats.emit(event, 5101, count) && count == 5;
+}
+
+constexpr bool observationsDoNotChangeIdentity()
+{
+    const auto original = ioEvent();
+    auto changed = original;
+    changed.result = 2; changed.actual = 2; changed.requested = 100; changed.row = 19;
+    changed.before.detached = 200; changed.after.fault = true;
+    changed.hasStat = true; changed.fileSize = INT64_MAX;
+    changed.ioOk = true; changed.mediumOk = true;
+    return usb_io_diag::sameFailure(original, changed);
+}
+
+constexpr bool identityChangesRespectBudget(unsigned field)
+{
+    usb_io_diag::Repeats repeats{};
+    const auto original = ioEvent();
+    auto changed = original;
+    if (field == 0) changed.operation = usb_io_diag::Operation::Flush;
+    if (field == 1) changed.context = usb_io_diag::Context::MediumChanged;
+    if (field == 2) changed.branch = usb_io_diag::Context::StatError;
+    if (field == 3) changed.error = 28;
+    if (field == 4) changed.streamError = 0;
+    if (field == 5) usb_io_diag::copy(changed.path, "/usb/SENSOR.txt");
+    if (field == 6) usb_io_diag::copy(changed.mode, "w");
+    uint32_t count = 0;
+    if (!repeats.emit(original, 100, count) || repeats.emit(changed, 101, count)) return false;
+    if (count != (field == 5 ? 2u : 1u) || repeats.suppressed != 1 || repeats.classSuppressed != 1 ||
+        repeats.latest.error != changed.error || !usb_io_diag::equal(repeats.latest.path, changed.path)) return false;
+    return !repeats.emit(original, 102, count) && count == (field == 5 ? 3u : 2u) &&
+        repeats.suppressed == 2 && repeats.classSuppressed == (field == 5 ? 2u : 1u);
+}
+
+constexpr bool rawReturnAndErrnoIdentity()
+{
+    auto first = ioEvent(usb_io_diag::Operation::Mount);
+    auto second = first;
+    second.error = 999; // Mbed return code, not incidental errno, is identity.
+    if (!usb_io_diag::sameFailure(first, second)) return false;
+    second.result = -5;
+    if (usb_io_diag::sameFailure(first, second)) return false;
+    first.operation = second.operation = usb_io_diag::Operation::Close;
+    second.result = first.result;
+    return !usb_io_diag::sameFailure(first, second);
+}
+
+constexpr bool eightAlternatingFailuresAndEviction()
+{
+    usb_io_diag::Repeats repeats{};
+    uint32_t count = 0;
+    for (unsigned round = 0; round < 3; ++round) {
+        for (unsigned cause = 0; cause < 8; ++cause) {
+            auto event = ioEvent();
+            event.error = cause;
+            if (repeats.emit(event, round * 100 + cause, count) != (round == 0 && cause == 0) ||
+                count != round + 1) return false;
+        }
+    }
+    auto ninth = ioEvent();
+    ninth.error = 99;
+    if (repeats.emit(ninth, 400, count) || count != 1) return false;
+    auto evicted = ioEvent();
+    evicted.error = 0;
+    return !repeats.emit(evicted, 401, count) && count == 1 && repeats.suppressed == 25;
+}
+
+constexpr bool repeatMillisWrap()
+{
+    usb_io_diag::Repeats repeats{};
+    const auto event = ioEvent();
+    uint32_t count = 0;
+    const uint32_t start = UINT32_MAX - 2000;
+    return repeats.emit(event, start, count) && count == 1 &&
+        !repeats.emit(event, uint32_t(start + 4999), count) && count == 2 &&
+        repeats.classSuppressed == 1 && repeats.suppressed == 1 &&
+        repeats.emit(event, uint32_t(start + 5000), count) && count == 3 &&
+        repeats.classSuppressed == 1 && repeats.suppressed == 1;
+}
+
+static_assert(firstFailureSurvivesCleanup(), "Cleanup failures never replace first failure; reset permits next operation");
+static_assert(firstFailureOwnsPath(), "Captured segment path survives source and candidate mutation");
+static_assert(boundedIoCopies(), "Owned strings are bounded and NUL terminated with intact canaries");
+static_assert(repeatDeadlineAndCount(), "First cause is immediate; identical repeats retain cumulative count and 5s deadline");
+static_assert(observationsDoNotChangeIdentity(), "Changing counts, flags and observations must not defeat throttling");
+static_assert(identityChangesRespectBudget(0), "New operation obeys global budget and retains context");
+static_assert(identityChangesRespectBudget(1), "New context obeys global budget");
+static_assert(identityChangesRespectBudget(2), "New branch obeys global budget");
+static_assert(identityChangesRespectBudget(3), "New errno obeys global budget");
+static_assert(identityChangesRespectBudget(4), "New stream error obeys global budget");
+static_assert(identityChangesRespectBudget(5), "Changing path retains class count and latest owned path");
+static_assert(identityChangesRespectBudget(6), "New mode obeys global budget");
+static_assert(rawReturnAndErrnoIdentity(), "Raw Mbed return code controls identity; FILE errno remains significant");
+static_assert(eightAlternatingFailuresAndEviction(), "Eight alternating causes retain counts; ninth evicts oldest slot");
+static_assert(repeatMillisWrap(), "Repeat deadline remains valid across millis wrap");
+
+constexpr bool sameDecimal(const char *actual, const char *expected)
+{
+    while (*expected) if (*actual++ != *expected++) return false;
+    return *actual == '\0';
+}
+
+constexpr bool unsignedDecimal(uint64_t value, const char *expected)
+{
+    char guarded[23]{};
+    guarded[0] = '<';
+    guarded[22] = '>';
+    return gnss_log::decimalUnsigned(guarded + 1, 21, value) &&
+        sameDecimal(guarded + 1, expected) && guarded[0] == '<' && guarded[22] == '>';
+}
+
+constexpr bool signedDecimal(int64_t value, const char *expected)
+{
+    char guarded[23]{};
+    guarded[0] = '<';
+    guarded[22] = '>';
+    return gnss_log::decimalSigned(guarded + 1, 21, value) &&
+        sameDecimal(guarded + 1, expected) && guarded[0] == '<' && guarded[22] == '>';
+}
+
+constexpr bool decimalBufferBoundaries(bool signedValue)
+{
+    // Every advertised capacity gets adjacent canaries, including capacity 0.
+    for (size_t capacity = 0; capacity <= 21; ++capacity) {
+        char guarded[23]{};
+        for (char &byte : guarded) byte = '!';
+        const bool ok = signedValue
+            ? gnss_log::decimalSigned(guarded + 1, capacity, INT64_MIN)
+            : gnss_log::decimalUnsigned(guarded + 1, capacity, UINT64_MAX);
+        if (ok != (capacity == 21) || guarded[0] != '!' || guarded[capacity + 1] != '!')
+            return false;
+        if (capacity && !ok && guarded[1] != '\0') return false;
+    }
+    char unchanged = '!';
+    return !gnss_log::decimalUnsigned(nullptr, 21, 0) &&
+        !gnss_log::decimalSigned(nullptr, 21, -1) &&
+        !gnss_log::decimalUnsigned(&unchanged, 0, 0) &&
+        !gnss_log::decimalSigned(&unchanged, 0, -1) && unchanged == '!';
+}
+
+constexpr bool smallDecimalBuffers()
+{
+    char zero[2]{}, negative[3]{}, tooSmall[2] = {'!', '!'};
+    return gnss_log::decimalUnsigned(zero, sizeof(zero), 0) && sameDecimal(zero, "0") &&
+        gnss_log::decimalSigned(negative, sizeof(negative), -1) && sameDecimal(negative, "-1") &&
+        !gnss_log::decimalSigned(tooSmall, sizeof(tooSmall), -1) && tooSmall[0] == '\0';
+}
+
+static_assert(unsignedDecimal(0, "0"), "Unsigned zero is a decimal digit");
+static_assert(unsignedDecimal(UINT32_MAX, "4294967295"), "32-bit boundary remains exact");
+static_assert(unsignedDecimal(uint64_t(UINT32_MAX) + 1, "4294967296"), "No truncation above 32 bits");
+static_assert(unsignedDecimal(UINT64_MAX, "18446744073709551615"), "Full unsigned 64-bit range");
+static_assert(unsignedDecimal(uint64_t(INT64_MAX) + 1, "9223372036854775808"), "Unsigned high bit survives");
+static_assert(signedDecimal(0, "0"), "Signed zero has no sign");
+static_assert(signedDecimal(INT64_MAX, "9223372036854775807"), "Full signed positive range");
+static_assert(signedDecimal(INT64_MIN, "-9223372036854775808"), "Signed minimum has no negation overflow");
+static_assert(signedDecimal(-1, "-1"), "Negative UTC millisecond before epoch");
+static_assert(signedDecimal(-1001, "-1001"), "Negative UTC across second boundary");
+static_assert(signedDecimal(-4294967297LL, "-4294967297"), "Negative UTC exceeds 32-bit range");
+static_assert(signedDecimal(4294967296LL, "4294967296"), "Positive UTC exceeds 32-bit range");
+static_assert(decimalBufferBoundaries(false), "Unsigned capacities and canaries prevent overwrite");
+static_assert(decimalBufferBoundaries(true), "Signed capacities and canaries prevent overwrite");
+static_assert(smallDecimalBuffers(), "Small exact buffers succeed and short buffers fail empty");
 
 struct FaultIo {
     using Handle = unsigned;
